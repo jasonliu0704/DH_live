@@ -166,6 +166,9 @@ def run(video_path, export_imgs = True):
 
     video_name = os.path.basename(video_path).split(".")[0]
     video_data_path = os.path.join(os.path.dirname(video_path), video_name)
+    if os.path.exists(video_data_path):
+        print(f"Skipping {video_data_path} as it already exists")
+        return
     os.makedirs(video_data_path, exist_ok=True)
 
     if export_imgs:
@@ -251,19 +254,44 @@ def run(video_path, export_imgs = True):
 
 
 
-def main():
-    # 检查命令行参数的数量
-    if len(sys.argv) != 2:
-        print("Usage: python data_preparation.py <data_dir>")
-        sys.exit(1)  # 参数数量不正确时退出程序
+import os
+import sys
+from glob import glob
+import tqdm
+import traceback
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
-    # 获取video_name参数
+# (Keep your existing imports and function definitions such as run(), etc.)
+
+def run_parallel(video_path, gpu_id):
+    # Set CUDA_VISIBLE_DEVICES so that this process uses only the assigned GPU.
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    try:
+        run(video_path)
+    except Exception as e:
+        print(f"Error processing {video_path} on GPU {gpu_id}: {e}")
+        traceback.print_exc()
+
+def main():
+    if len(sys.argv) != 2:
+        print("Usage: python data_preparation_face.py <data_dir>")
+        sys.exit(1)
+        
     data_dir = sys.argv[1]
     print(f"Video dir is set to: {data_dir}")
-    # data_dir = r"F:\C\AI\CV\88"
-    video_files = glob.glob("{}/*.mp4".format(data_dir))
-    for video_path in tqdm.tqdm(video_files):
-        run(video_path)
+    video_files = glob("{}/*.mp4".format(data_dir))
+    
+    # Number of GPUs available (you can also pass this as an argument)
+    ngpu = 2  # or set to args.ngpu if you parse one
+    jobs = [(video_path, i % ngpu) for i, video_path in enumerate(video_files)]
+    
+    with ProcessPoolExecutor(max_workers=ngpu) as executor:
+        futures = [executor.submit(run_parallel, video_path, gpu_id) for video_path, gpu_id in jobs]
+        for future in tqdm.tqdm(as_completed(futures), total=len(futures)):
+            try:
+                future.result()
+            except Exception as e:
+                print(e)
 
 if __name__ == "__main__":
     main()
