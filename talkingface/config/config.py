@@ -60,6 +60,12 @@ class DINetTrainingOptions():
                                  default='',
                                  type=str,
                                  help='Save data (.pth) of previous training')
+        # Add resume functionality
+        self.parser.add_argument('--resume', action='store_true', help='Resume training from checkpoint')
+        self.parser.add_argument('--resume_path',
+                                 default='',
+                                 type=str,
+                                 help='Path to checkpoint file (.pth) to resume training from')
         self.parser.add_argument('--pretrained_syncnet_path',
                                  default='',
                                  type=str,
