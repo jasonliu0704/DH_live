@@ -10,6 +10,13 @@ import torch.utils.data as data
 import random
 
 def get_image(A_path, crop_coords, input_type, resize=256):
+    if A_path is None or not isinstance(A_path, np.ndarray):
+        print("Warning: A_path is invalid in get_image")
+        if input_type == 'mediapipe':
+            return np.zeros((468, 3), dtype=np.float32)
+        else:
+            return np.zeros((resize, resize, 3), dtype=np.uint8)
+
     (x_min, y_min, x_max, y_max) = crop_coords
     width = x_max - x_min
     height = y_max - y_min
@@ -33,6 +40,11 @@ def get_image(A_path, crop_coords, input_type, resize=256):
         return img_output
 
 def generate_input(img, keypoints, mask_keypoints, is_train=False, mode=["mouth_bias"], mouth_width=None, mouth_height=None):
+    if img is None or not isinstance(img, np.ndarray) or keypoints is None or mask_keypoints is None:
+        print("Warning: Invalid inputs in generate_input")
+        fallback = np.zeros((256, 256, 3), dtype=np.uint8)
+        return fallback, fallback, [0, 0, 256, 256]
+
     # 根据关键点决定正方形裁剪区域
     crop_coords = crop_face(keypoints, size=img.shape[:2], is_train=is_train)
     w = max(1, crop_coords[2] - crop_coords[0])  # Avoid zero or negative width
@@ -48,6 +60,9 @@ def generate_input(img, keypoints, mask_keypoints, is_train=False, mode=["mouth_
     # source_img信息：扣出嘴部区域
     source_img = copy.deepcopy(target_img)
     source_keypoints = target_keypoints
+    # If keypoints or image content is NaN, replace it
+    if np.isnan(source_keypoints).any():
+        source_keypoints = np.nan_to_num(source_keypoints, nan=0.0)
 
     pts = source_keypoints.copy()
 
@@ -62,6 +77,8 @@ def generate_input(img, keypoints, mask_keypoints, is_train=False, mode=["mouth_
     cv2.fillPoly(source_img, [pts], color=(0, 0, 0))
     source_face_egde = draw_face_feature_maps(source_keypoints, mode=mode, im_edges=target_img,
                                               mouth_width=mouth_width * (256 / w), mouth_height=mouth_height * (256 / w))
+    if source_face_egde is None or np.isnan(source_face_egde).any():
+        source_face_egde = np.zeros_like(target_img)
     source_img = np.concatenate([source_img, source_face_egde], axis=2)
     return source_img, target_img, crop_coords
 
