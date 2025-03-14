@@ -139,10 +139,15 @@ def draw_face_feature_maps(keypoints, mode = ["mouth", "nose", "eye", "oval"], s
         img_mouth = cv2.cvtColor(im_edges, cv2.COLOR_BGR2GRAY)
         img_mouth = cv2.blur(img_mouth, blur)
         # print(mouth_index)
-        mean_ = int(np.mean(img_mouth[(mouth_index[0], mouth_index[1])]))
+        val_region = img_mouth[(mouth_index[0], mouth_index[1])]
+        if np.isnan(val_region).any():  # Fallback if region has NaN
+            val_region = np.nan_to_num(val_region, nan=0.0)
+        mean_ = int(np.mean(val_region))
         max_, min_ = random.randint(mean_ + 40, mean_ + 70), random.randint(mean_ - 70, mean_ - 40)
+        if max_ <= min_:
+            max_ = min_ + 1  # avoid zero or negative range
+
         img_mouth = (img_mouth.astype(np.float32) - min_) / (max_ - min_) * 255.
-        img_mouth = img_mouth.clip(0, 255).astype(np.uint8)
         # print(img_mouth.shape[0], img_mouth.shape[1])
         img_mouth = cv2.resize(img_mouth, (100, 50))
 

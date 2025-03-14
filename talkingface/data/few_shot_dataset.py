@@ -24,6 +24,10 @@ def get_image(A_path, crop_coords, input_type, resize=256):
     size = np.array([width if width > 0 else 1, height if height > 0 else 1])
 
     if input_type == 'mediapipe':
+        # Ensure A_path has enough columns when shape[1] == 2 or >= 3
+        if A_path.shape[1] < 2:
+            print("Warning: A_path has too few columns in mediapipe mode")
+            return np.zeros((468, 3), dtype=np.float32)
         if A_path.shape[1] == 2:
             pose_pts = (A_path - np.array([x_min, y_min])) * resize / size
             return pose_pts[:, :2]
@@ -42,6 +46,11 @@ def get_image(A_path, crop_coords, input_type, resize=256):
 def generate_input(img, keypoints, mask_keypoints, is_train=False, mode=["mouth_bias"], mouth_width=None, mouth_height=None):
     if img is None or not isinstance(img, np.ndarray) or keypoints is None or mask_keypoints is None:
         print("Warning: Invalid inputs in generate_input")
+        fallback = np.zeros((256, 256, 3), dtype=np.uint8)
+        return fallback, fallback, [0, 0, 256, 256]
+
+    if keypoints.shape[1] < 2 or mask_keypoints.shape[1] < 2:
+        print("Warning: Cannot slice [:, :2] because shape is too small")
         fallback = np.zeros((256, 256, 3), dtype=np.uint8)
         return fallback, fallback, [0, 0, 256, 256]
 
@@ -231,8 +240,12 @@ def data_preparation(train_video_list):
         img_all.append(img_filelist)
 
         Path_output_pkl = "{}/keypoint_rotate.pkl".format(model_name)
-        with open(Path_output_pkl, "rb") as f:
-            images_info = pickle.load(f)
+        try:
+            with open(Path_output_pkl, "rb") as f:
+                images_info = pickle.load(f)
+        except Exception as e:
+            print(f"Warning: Could not load pickle {Path_output_pkl}: {e}")
+            images_info = np.zeros((0, 0, 3))
         keypoints_all.append(images_info[:, main_keypoints_index, :2])
 
         Path_output_pkl = "{}/face_mat_mask.pkl".format(model_name)
