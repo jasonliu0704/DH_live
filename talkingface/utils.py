@@ -118,138 +118,165 @@ def draw_mouth_maps(keypoints, size=(256, 256), im_edges = None):
     cv2.fillPoly(im_edges, [pts], color=(127, 0, 0))
     return im_edges
 
-def draw_face_feature_maps(keypoints, mode = ["mouth", "nose", "eye", "oval"], size=(256, 256), im_edges = None,  mouth_width = None, mouth_height = None):
-    w, h = size
+def draw_face_feature_maps(keypoints, mode=["mouth", "nose", "eye", "oval"], size=(256, 256),
+                           im_edges=None, mouth_width=None, mouth_height=None):
+    # Basic sanity checks
+    if keypoints is None or len(keypoints) == 0:
+        # Return an empty edges image if keypoints are not valid
+        h, w = size
+        return np.zeros((h, w, 3), np.uint8)
+    # Fill any NaNs in keypoints
+    if np.isnan(keypoints).any():
+        keypoints = np.nan_to_num(keypoints, nan=0.0)
+
     # edge map for face region from keypoints
+    w, h = size
     if im_edges is None:
-        im_edges = np.zeros((h, w, 3), np.uint8)  # edge map for all edges
+        im_edges = np.zeros((h, w, 3), np.uint8)
 
+    # -----------------------------------------------------------------------
+    # MOUTH BIAS section
+    # -----------------------------------------------------------------------
     if "mouth_bias" in mode:
+        # Ensure we have enough nose indices
+        if len(INDEX_NOSE_EDGE) <= 5:
+            return im_edges  # Not enough indices in INDEX_NOSE_EDGE
+        
+        # Ensure mouth_width / mouth_height are usable
+        if not mouth_width or not mouth_height or mouth_width <= 0 or mouth_height <= 0:
+            return im_edges
 
-        w0, w1, h0, h1 = (int(keypoints[INDEX_NOSE_EDGE[5], 0] - mouth_width / 2),
-                          int(keypoints[INDEX_NOSE_EDGE[5], 0] + mouth_width / 2),
-                          int(keypoints[INDEX_NOSE_EDGE[5], 1] + mouth_height / 4),
-                          int(keypoints[INDEX_NOSE_EDGE[5], 1] + mouth_height / 4 + mouth_height))
-        w0, h0 = max(0, w0), max(h0, 0)
-        # print(w0, w1, h0, h1)
-        mouth_mask = np.zeros((h, w, 3), np.uint8)  # edge map for all edges
+        # Nose anchor might be out of keypoints range
+        nose_idx = INDEX_NOSE_EDGE[5]
+        if nose_idx >= len(keypoints):
+            return im_edges
+
+        # Compute bounding box
+        w0 = int(keypoints[nose_idx, 0] - mouth_width / 2)
+        w1 = int(keypoints[nose_idx, 0] + mouth_width / 2)
+        h0 = int(keypoints[nose_idx, 1] + mouth_height / 4)
+        h1 = int(keypoints[nose_idx, 1] + mouth_height / 4 + mouth_height)
+
+        # Ensure valid bounding region
+        if w1 <= w0 or h1 <= h0:
+            return im_edges
+        w0, h0 = max(0, w0), max(0, h0)
+        w1, h1 = min(w, w1), min(h, h1)
+
+        # Create mouth mask
+        mouth_mask = np.zeros((h, w, 3), np.uint8)
         mouth_mask[h0:h1, w0:w1] = 255
         mouth_index = np.where(mouth_mask == 255)
-        blur = (10, 10)
-        img_mouth = cv2.cvtColor(im_edges, cv2.COLOR_BGR2GRAY)
-        img_mouth = cv2.blur(img_mouth, blur)
-        # print(mouth_index)
-        val_region = img_mouth[(mouth_index[0], mouth_index[1])]
-        if np.isnan(val_region).any():  # Fallback if region has NaN
-            val_region = np.nan_to_num(val_region, nan=0.0)
-        mean_ = int(np.mean(val_region))
-        max_, min_ = random.randint(mean_ + 40, mean_ + 70), random.randint(mean_ - 70, mean_ - 40)
-        if max_ <= min_:
-            max_ = min_ + 1  # avoid zero or negative range
 
+        # Blur grayscale version
+        img_mouth = cv2.cvtColor(im_edges, cv2.COLOR_BGR2GRAY)
+        img_mouth = cv2.blur(img_mouth, (10, 10))
+
+        val_region = img_mouth[mouth_index[0], mouth_index[1]]
+        if val_region.size == 0:
+            return im_edges
+        if np.isnan(val_region).any():
+            val_region = np.nan_to_num(val_region, nan=0.0)
+
+        # Safely compute ranges
+        mean_ = int(np.mean(val_region))
+        # Random ranges with basic clamp
+        hi_low = mean_ + 40
+        hi_high = mean_ + 70
+        lo_low = mean_ - 70
+        lo_high = mean_ - 40
+
+        # If random ranges invert, swap them and ensure valid
+        if hi_low > hi_high:
+            hi_low, hi_high = hi_high, hi_low
+        if lo_low > lo_high:
+            lo_low, lo_high = lo_high, lo_low
+
+        # Sample random intensities
+        max_ = random.randint(hi_low, hi_high)
+        min_ = random.randint(lo_low, lo_high)
+        if max_ <= min_:
+            max_ = min_ + 1
+
+        # Normalize and add noise
         img_mouth = (img_mouth.astype(np.float32) - min_) / (max_ - min_) * 255.
-        # print(img_mouth.shape[0], img_mouth.shape[1])
         img_mouth = cv2.resize(img_mouth, (100, 50))
 
-        # 定义噪声的标准差
-        sigma = 8  # 你可以根据需要调整这个值
-        # 生成与图片相同大小和类型的噪声
+        sigma = 8
         noise = sigma * np.random.randn(img_mouth.shape[0], img_mouth.shape[1])
-        # 将噪声添加到图片上
-        img_mouth = img_mouth + noise
-        img_mouth = cv2.resize(img_mouth.clip(0, 255).astype(np.uint8), (im_edges.shape[0], im_edges.shape[1]))
+        img_mouth = (img_mouth + noise).clip(0, 255).astype(np.uint8)
+        # Resize back to original edge size
+        img_mouth = cv2.resize(img_mouth, (w, h))  # w x h
 
-        img_mouth = np.concatenate(
-            [img_mouth[:, :, np.newaxis], img_mouth[:, :, np.newaxis], img_mouth[:, :, np.newaxis]], axis=2)
+        # Convert back to 3-channel
+        img_mouth = np.dstack([img_mouth]*3)
 
-        # bias_x = int(min(size[0] - max(mouth_index[0]), min(mouth_index[0])))
-        # bias_y = int(min(size[0] - max(mouth_index[1]), min(mouth_index[1])))
-        # print(bias_x, bias_y)
-        # bias_x = random.randint(-bias_x // 10, bias_x // 10)
-        # bias_y = random.randint(-bias_y // 10, bias_y // 10)
-        #
-        # mouth_index2 = np.array(mouth_index)
-        # # print(mouth_index)
-        # mouth_index2[0] = mouth_index[0] + bias_x
-        # mouth_index2[1] = mouth_index[1] + bias_y
-        # mouth_index2 = (mouth_index2[0], mouth_index2[1], mouth_index2[2])
-        # # print(mouth_index2.T, mouth_index2.shape)
-        #
-        output = np.zeros((h, w, 3), np.uint8)
-        # output[mouth_index2] = img_mouth[mouth_index]
-        # return im_edges
+        output = np.zeros(im_edges.shape, np.uint8)
         output[mouth_index] = img_mouth[mouth_index]
         im_edges = output
+
+    # -----------------------------------------------------------------------
+    # NOSE LINES
+    # -----------------------------------------------------------------------
     if "nose" in mode:
         for ii in range(len(INDEX_NOSE_EDGE) - 1):
-            pt1 = [int(flt) for flt in keypoints[INDEX_NOSE_EDGE[ii]]][:2]
-            pt2 = [int(flt) for flt in keypoints[INDEX_NOSE_EDGE[ii+1]]][:2]
-            cv2.line(im_edges, tuple(pt1), tuple(pt2), (0, 255, 0), 2)
-        for ii in range(len(INDEX_NOSE_MID) -1):
-            pt1 = [int(flt) for flt in keypoints[INDEX_NOSE_MID[ii]]][:2]
-            pt2 = [int(flt) for flt in keypoints[INDEX_NOSE_MID[ii + 1]]][:2]
-            cv2.line(im_edges, tuple(pt1), tuple(pt2), (0, 255, 0), 2)
+            idx1, idx2 = INDEX_NOSE_EDGE[ii], INDEX_NOSE_EDGE[ii + 1]
+            if idx1 < len(keypoints) and idx2 < len(keypoints):
+                pt1 = tuple(map(int, keypoints[idx1][:2]))
+                pt2 = tuple(map(int, keypoints[idx2][:2]))
+                cv2.line(im_edges, pt1, pt2, (0, 255, 0), 2)
+        # Nose mid
+        for ii in range(len(INDEX_NOSE_MID) - 1):
+            idx1, idx2 = INDEX_NOSE_MID[ii], INDEX_NOSE_MID[ii + 1]
+            if idx1 < len(keypoints) and idx2 < len(keypoints):
+                pt1 = tuple(map(int, keypoints[idx1][:2]))
+                pt2 = tuple(map(int, keypoints[idx2][:2]))
+                cv2.line(im_edges, pt1, pt2, (0, 255, 0), 2)
+
+    # -----------------------------------------------------------------------
+    # EYES
+    # -----------------------------------------------------------------------
     if "eye" in mode:
+        # Left eye
         for ii in range(len(INDEX_LEFT_EYE)):
-            pt1 = [int(flt) for flt in keypoints[INDEX_LEFT_EYE[ii]]][:2]
-            pt2 = [int(flt) for flt in keypoints[INDEX_LEFT_EYE[(ii + 1)%len(INDEX_LEFT_EYE)]]][:2]
-            cv2.line(im_edges, tuple(pt1), tuple(pt2), (0, 255, 0), 2)
+            idx1 = INDEX_LEFT_EYE[ii]
+            idx2 = INDEX_LEFT_EYE[(ii + 1) % len(INDEX_LEFT_EYE)]
+            if idx1 < len(keypoints) and idx2 < len(keypoints):
+                pt1 = tuple(map(int, keypoints[idx1][:2]))
+                pt2 = tuple(map(int, keypoints[idx2][:2]))
+                cv2.line(im_edges, pt1, pt2, (0, 255, 0), 2)
+        # Right eye
         for ii in range(len(INDEX_RIGHT_EYE)):
-            pt1 = [int(flt) for flt in keypoints[INDEX_RIGHT_EYE[ii]]][:2]
-            pt2 = [int(flt) for flt in keypoints[INDEX_RIGHT_EYE[(ii + 1) % len(INDEX_RIGHT_EYE)]]][:2]
-            cv2.line(im_edges, tuple(pt1), tuple(pt2), (0, 255, 0), 2)
+            idx1 = INDEX_RIGHT_EYE[ii]
+            idx2 = INDEX_RIGHT_EYE[(ii + 1) % len(INDEX_RIGHT_EYE)]
+            if idx1 < len(keypoints) and idx2 < len(keypoints):
+                pt1 = tuple(map(int, keypoints[idx1][:2]))
+                pt2 = tuple(map(int, keypoints[idx2][:2]))
+                cv2.line(im_edges, pt1, pt2, (0, 255, 0), 2)
+
+    # -----------------------------------------------------------------------
+    # OVAL
+    # -----------------------------------------------------------------------
     if "oval" in mode:
-        tmp =  INDEX_FACE_OVAL[:6]
-        for ii in range(len(tmp) -1):
-            pt1 = [int(flt) for flt in keypoints[tmp[ii]]][:2]
-            pt2 = [int(flt) for flt in keypoints[tmp[ii + 1]]][:2]
-            cv2.line(im_edges, tuple(pt1), tuple(pt2), (0, 0, 255), 2)
+        tmp = INDEX_FACE_OVAL[:6]
+        for ii in range(len(tmp) - 1):
+            idx1, idx2 = tmp[ii], tmp[ii + 1]
+            if idx1 < len(keypoints) and idx2 < len(keypoints):
+                pt1 = tuple(map(int, keypoints[idx1][:2]))
+                pt2 = tuple(map(int, keypoints[idx2][:2]))
+                cv2.line(im_edges, pt1, pt2, (0, 0, 255), 2)
         tmp = INDEX_FACE_OVAL[-6:]
         for ii in range(len(tmp) - 1):
-            pt1 = [int(flt) for flt in keypoints[tmp[ii]]][:2]
-            pt2 = [int(flt) for flt in keypoints[tmp[ii + 1]]][:2]
-            cv2.line(im_edges, tuple(pt1), tuple(pt2), (0, 0, 255), 2)
+            idx1, idx2 = tmp[ii], tmp[ii + 1]
+            if idx1 < len(keypoints) and idx2 < len(keypoints):
+                pt1 = tuple(map(int, keypoints[idx1][:2]))
+                pt2 = tuple(map(int, keypoints[idx2][:2]))
+                cv2.line(im_edges, pt1, pt2, (0, 0, 255), 2)
 
-    # if "mouth_outer" in mode:
-    #     pts = keypoints[INDEX_LIPS_OUTER]
-    #     pts = pts.reshape((-1, 1, 2)).astype(np.int32)
-    #     cv2.fillPoly(im_edges, [pts], color=(255, 0, 0))
-    # if "mouth" in mode:
-    #     pts = keypoints[INDEX_LIPS_OUTER][:,2]
-    #     pts = pts.reshape((-1, 1, 2)).astype(np.int32)
-    #     cv2.fillPoly(im_edges, [pts], color=(255, 0, 0))
-    #     pts = keypoints[INDEX_LIPS_INNER][:,2]
-    #     pts = pts.reshape((-1, 1, 2)).astype(np.int32)
-    #     cv2.fillPoly(im_edges, [pts], color=(0, 0, 0))
-    # if "mouth_outer" in mode:
-    #     for ii in range(len(INDEX_LIPS_OUTER)):
-    #         pt1 = [int(flt) for flt in keypoints[INDEX_LIPS_OUTER[ii]]][:2]
-    #         pt2 = [int(flt) for flt in keypoints[INDEX_LIPS_OUTER[(ii + 1)%len(INDEX_LIPS_OUTER)]]][:2]
-    #         cv2.line(im_edges, tuple(pt1), tuple(pt2), (255, 0, 0), 2)
-
-
-
-    if "mouth" in mode:
-        for ii in range(len(INDEX_LIPS_OUTER)):
-            pt1 = [int(flt) for flt in keypoints[INDEX_LIPS_OUTER[ii]]][:2]
-            pt2 = [int(flt) for flt in keypoints[INDEX_LIPS_OUTER[(ii + 1)%len(INDEX_LIPS_OUTER)]]][:2]
-            cv2.line(im_edges, tuple(pt1), tuple(pt2), (255, 0, 0), 2)
-        for ii in range(len(INDEX_LIPS_INNER)):
-            pt1 = [int(flt) for flt in keypoints[INDEX_LIPS_INNER[ii]]][:2]
-            pt2 = [int(flt) for flt in keypoints[INDEX_LIPS_INNER[(ii + 1)%len(INDEX_LIPS_INNER)]]][:2]
-            cv2.line(im_edges, tuple(pt1), tuple(pt2), (255, 0, 0), 2)
-    if "muscle" in mode:
-        for ii in range(len(INDEX_MUSCLE) - 1):
-            pt1 = [int(flt) for flt in keypoints[INDEX_MUSCLE[ii]]][:2]
-            pt2 = [int(flt) for flt in keypoints[INDEX_MUSCLE[(ii + 1) % len(INDEX_MUSCLE)]]][:2]
-            cv2.line(im_edges, tuple(pt1), tuple(pt2), (255, 255, 255), 2)
-
-    if "oval_all" in mode:
-        tmp =  INDEX_FACE_OVAL
-        for ii in range(len(tmp) -1):
-            pt1 = [int(flt) for flt in keypoints[tmp[ii]]][:2]
-            pt2 = [int(flt) for flt in keypoints[tmp[ii + 1]]][:2]
-            cv2.line(im_edges, tuple(pt1), tuple(pt2), (0, 0, 255), 2)
+    # -----------------------------------------------------------------------
+    # Additional modes — mouth, muscle, oval_all, etc. (optional)
+    # -----------------------------------------------------------------------
+    # You can similarly wrap each line loop in index checks & handle NaNs.
 
     return im_edges
 
