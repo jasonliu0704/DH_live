@@ -7,6 +7,7 @@ import glob
 import pickle
 import torch
 import torch.utils.data as data
+import random
 def get_image(A_path, crop_coords, input_type, resize= 256):
     (x_min, y_min, x_max, y_max) = crop_coords
     width = x_max - x_min
@@ -33,6 +34,11 @@ def get_image(A_path, crop_coords, input_type, resize= 256):
 def generate_input(img, keypoints, mask_keypoints, is_train = False, mode=["mouth_bias"], mouth_width = None, mouth_height = None):
     # 根据关键点决定正方形裁剪区域
     crop_coords = crop_face(keypoints, size=img.shape[:2], is_train=is_train)
+    w = max(1, crop_coords[2] - crop_coords[0])  # Avoid zero or negative width
+    if not mouth_width:
+        mouth_width = 1
+    if not mouth_height:
+        mouth_height = 1
     target_keypoints = get_image(keypoints[:,:2], crop_coords, input_type='mediapipe')
     target_img = get_image(img, crop_coords, input_type='img')
 
