@@ -1,5 +1,8 @@
 import os
 os.environ["kmp_duplicate_lib_ok"] = "true"
+current_dir = os.path.dirname(os.path.abspath(__file__))
+import sys
+sys.path.append(os.path.join(current_dir, ".."))
 from talkingface.models.common.Discriminator import Discriminator
 from talkingface.models.common.VGG19 import Vgg19
 from talkingface.models.DINet_mini import DINet_mini as DINet
