@@ -9,7 +9,10 @@ import torch
 import torch.utils.data as data
 def get_image(A_path, crop_coords, input_type, resize= 256):
     (x_min, y_min, x_max, y_max) = crop_coords
-    size = (x_max - x_min, y_max - y_min)
+    width = x_max - x_min
+    height = y_max - y_min
+    # Ensure nonzero crop dimensions to prevent divide by zero
+    size = np.array([width if width > 0 else 1, height if height > 0 else 1])
 
     if input_type == 'mediapipe':
         if A_path.shape[1] == 2:
@@ -22,6 +25,9 @@ def get_image(A_path, crop_coords, input_type, resize= 256):
 
     else:
         img_output = A_path[y_min:y_max, x_min:x_max, :]
+        # Fallback if crop is empty
+        if img_output.size == 0:
+            img_output = A_path
         img_output = cv2.resize(img_output, (resize, resize))
         return img_output
 def generate_input(img, keypoints, mask_keypoints, is_train = False, mode=["mouth_bias"], mouth_width = None, mouth_height = None):
