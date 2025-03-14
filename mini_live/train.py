@@ -51,11 +51,13 @@ if __name__ == "__main__":
     np.random.seed(opt.seed)
     torch.cuda.manual_seed(opt.seed)
 
-    df = pd.read_csv(r"F:\C\AI\CV\DH008_few_shot\DH0119_mouth64_48/imageVar2.csv")
-    video_list = df[df["imageVar"] > 350000]["name"].tolist()
-    video_list = [i for i in video_list if os.path.exists(i)]
-    video_list = [os.path.dirname(os.path.dirname(i)) for i in video_list]
-    path_ = r"F:\C\AI\CV\DH008_few_shot/preparation_bilibili"
+    # df = pd.read_csv(r"F:\C\AI\CV\DH008_few_shot\DH0119_mouth64_48/imageVar2.csv")
+    # video_list = df[df["imageVar"] > 350000]["name"].tolist()
+    # video_list = [i for i in video_list if os.path.exists(i)]
+    # video_list = [os.path.dirname(os.path.dirname(i)) for i in video_list]
+    # path_ = r"F:\C\AI\CV\DH008_few_shot/preparation_bilibili"
+    video_list = []
+    path_ = opt.train_data
     video_list += [os.path.join(path_, i) for i in os.listdir(path_)]
 
     print("video_selected final: ", len(video_list))
