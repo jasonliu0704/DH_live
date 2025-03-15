@@ -5,7 +5,7 @@ import os.path
 
 def detect_teeth(image_path):
     """
-    Detect teeth in an image, crop the region, and return the coordinates
+    Detect teeth in an image with improved accuracy for full teeth coverage
     
     Args:
         image_path: Path to the image file
@@ -51,7 +51,7 @@ def detect_teeth(image_path):
     for face in faces:
         landmarks = predictor(gray, face)
         
-        # Extract mouth region using landmarks
+        # Extract mouth region using landmarks with padding
         mouth_points = []
         for i in range(48, 68):  # Landmarks 48-67 represent the mouth region
             x = landmarks.part(i).x
@@ -62,24 +62,54 @@ def detect_teeth(image_path):
         mouth_rect = cv2.boundingRect(mouth_points)
         mx, my, mw, mh = mouth_rect
         
-        # Extract mouth region
-        mouth_roi = gray[my:my+mh, mx:mx+mw]
+        # Add padding to mouth region (15% on each side)
+        padding_x = int(mw * 0.15)
+        padding_y = int(mh * 0.15)
         
-        # Apply image processing to detect teeth (white/bright areas in mouth)
-        _, thresh = cv2.threshold(mouth_roi, 150, 255, cv2.THRESH_BINARY)
+        # Ensure padded coordinates stay within image bounds
+        mx_padded = max(0, mx - padding_x)
+        my_padded = max(0, my - padding_y)
+        mw_padded = min(image.shape[1] - mx_padded, mw + 2 * padding_x)
+        mh_padded = min(image.shape[0] - my_padded, mh + 2 * padding_y)
+        
+        # Extract mouth region with padding
+        mouth_roi = gray[my_padded:my_padded+mh_padded, mx_padded:mx_padded+mw_padded]
+        
+        # Try multiple thresholding techniques
+        teeth_regions = []
+        
+        # 1. Adaptive threshold
+        adaptive_thresh = cv2.adaptiveThreshold(
+            mouth_roi, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+            cv2.THRESH_BINARY, 11, 2
+        )
+        teeth_regions.append(adaptive_thresh)
+        
+        # 2. Original fixed threshold but with lower value
+        _, fixed_thresh = cv2.threshold(mouth_roi, 130, 255, cv2.THRESH_BINARY)
+        teeth_regions.append(fixed_thresh)
+        
+        # 3. Otsu's thresholding
+        _, otsu_thresh = cv2.threshold(mouth_roi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        teeth_regions.append(otsu_thresh)
+        
+        # Combine results
+        combined_thresh = np.zeros_like(mouth_roi)
+        for region in teeth_regions:
+            combined_thresh = cv2.bitwise_or(combined_thresh, region)
         
         # Clean up using morphological operations
-        kernel = np.ones((5, 5), np.uint8)
-        opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+        kernel = np.ones((3, 3), np.uint8)  # Smaller kernel for finer details
+        opening = cv2.morphologyEx(combined_thresh, cv2.MORPH_OPEN, kernel)
         
         # Find contours
         contours, _ = cv2.findContours(opening, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
-        # Filter contours to focus on teeth
+        # Filter contours - lower area threshold
         valid_contours = []
         for contour in contours:
             area = cv2.contourArea(contour)
-            if area > 100:  # Filter by minimum area
+            if area > 50:  # Lower minimum area threshold
                 valid_contours.append(contour)
         
         # Combine all detected teeth regions
@@ -93,9 +123,15 @@ def detect_teeth(image_path):
             teeth_contours_combined = np.vstack([cnt for cnt in valid_contours])
             tx, ty, tw, th = cv2.boundingRect(teeth_contours_combined)
             
-            # Convert to original image coordinates
-            tx += mx
-            ty += my
+            # Add padding to teeth region (10%)
+            teeth_padding_x = int(tw * 0.1)
+            teeth_padding_y = int(th * 0.1)
+            
+            # Convert to original image coordinates with padding
+            tx = mx_padded + max(0, tx - teeth_padding_x)
+            ty = my_padded + max(0, ty - teeth_padding_y)
+            tw = min(image.shape[1] - tx, tw + 2 * teeth_padding_x)
+            th = min(image.shape[0] - ty, th + 2 * teeth_padding_y)
             
             # Crop teeth region from original image
             teeth_image = image[ty:ty+th, tx:tx+tw]
