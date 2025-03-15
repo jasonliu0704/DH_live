@@ -314,7 +314,7 @@ def main():
     video_files = glob("{}/*.mp4".format(data_dir))
     
     # Number of GPUs available (you can also pass this as an argument)
-    ngpu = 2  # or set to args.ngpu if you parse one
+    ngpu = 4  # or set to args.ngpu if you parse one
     jobs = [(video_path, i % ngpu) for i, video_path in enumerate(video_files)]
     
     with ProcessPoolExecutor(max_workers=ngpu) as executor:
