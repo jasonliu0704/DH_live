@@ -61,7 +61,7 @@ def detect_teeth(image_path):
     for face in faces:
         landmarks = predictor(gray, face)
         
-        # Extract mouth region using landmarks with more padding
+        # Extract mouth region using landmarks with minimal padding
         mouth_points = []
         for i in range(48, 68):  # Landmarks 48-67 represent the mouth region
             x = landmarks.part(i).x
@@ -72,9 +72,9 @@ def detect_teeth(image_path):
         mouth_rect = cv2.boundingRect(mouth_points)
         mx, my, mw, mh = mouth_rect
         
-        # Add more padding to mouth region (25% on each side)
-        padding_x = int(mw * 0.25)
-        padding_y = int(mh * 0.25)
+        # Add minimal padding to mouth region (10% instead of 25%)
+        padding_x = int(mw * 0.1)
+        padding_y = int(mh * 0.1)
         
         # Ensure padded coordinates stay within image bounds
         mx_padded = max(0, mx - padding_x)
@@ -88,15 +88,15 @@ def detect_teeth(image_path):
         # Try multiple thresholding techniques
         teeth_regions = []
         
-        # 1. Adaptive threshold with smaller block size
+        # 1. More aggressive adaptive threshold for tighter detection
         adaptive_thresh = cv2.adaptiveThreshold(
             mouth_roi, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-            cv2.THRESH_BINARY, 9, 2
+            cv2.THRESH_BINARY, 7, 3  # Smaller block size, higher constant
         )
         teeth_regions.append(adaptive_thresh)
         
-        # 2. Range of fixed thresholds
-        for threshold_val in [120, 140, 160]:
+        # 2. Higher threshold values to focus on the brightest areas (teeth)
+        for threshold_val in [150, 170, 190]:  # Higher threshold values
             _, fixed_thresh = cv2.threshold(mouth_roi, threshold_val, 255, cv2.THRESH_BINARY)
             teeth_regions.append(fixed_thresh)
         
@@ -110,26 +110,37 @@ def detect_teeth(image_path):
             combined_thresh = cv2.bitwise_or(combined_thresh, region)
         
         # Clean up using morphological operations
-        kernel = np.ones((3, 3), np.uint8)
+        kernel = np.ones((2, 2), np.uint8)  # Smaller kernel for finer detail
         opening = cv2.morphologyEx(combined_thresh, cv2.MORPH_OPEN, kernel)
         
-        # Additional closing to connect nearby teeth regions
-        closing = cv2.morphologyEx(opening, cv2.MORPH_CLOSE, kernel)
+        # More selective closing to avoid merging teeth with non-teeth regions
+        small_closing = cv2.morphologyEx(opening, cv2.MORPH_CLOSE, kernel)
         
         # Find contours
-        contours, _ = cv2.findContours(closing, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(small_closing, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
-        # Filter contours - lower area threshold
+        # More selective contour filtering
         valid_contours = []
         for contour in contours:
             area = cv2.contourArea(contour)
-            if area > 30:  # Even lower minimum area threshold
-                valid_contours.append(contour)
+            x, y, w, h = cv2.boundingRect(contour)
+            aspect_ratio = w / float(h) if h > 0 else 0
+            
+            # Filter by area, aspect ratio and brightness
+            if area > 30 and 0.2 < aspect_ratio < 3.0:
+                # Check average brightness of the region
+                mask = np.zeros_like(mouth_roi)
+                cv2.drawContours(mask, [contour], -1, 255, -1)
+                mean_brightness = cv2.mean(mouth_roi, mask=mask)[0]
+                
+                # Only include regions that are significantly brighter
+                if mean_brightness > np.mean(mouth_roi) + 20:
+                    valid_contours.append(contour)
         
         # Combine all detected teeth regions
         if valid_contours:
             # Create mask for all teeth contours
-            teeth_mask = np.zeros_like(closing)
+            teeth_mask = np.zeros_like(small_closing)
             for contour in valid_contours:
                 cv2.drawContours(teeth_mask, [contour], -1, 255, -1)
             
@@ -137,11 +148,11 @@ def detect_teeth(image_path):
             teeth_contours_combined = np.vstack([cnt for cnt in valid_contours])
             tx, ty, tw, th = cv2.boundingRect(teeth_contours_combined)
             
-            # Add more padding to teeth region (20%)
-            teeth_padding_x = int(tw * 0.2)
-            teeth_padding_y = int(th * 0.2)
+            # Add minimal padding to teeth region (5% instead of 20%)
+            teeth_padding_x = int(tw * 0.05)
+            teeth_padding_y = int(th * 0.05)
             
-            # Convert to original image coordinates with padding
+            # Convert to original image coordinates with minimal padding
             tx = mx_padded + max(0, tx - teeth_padding_x)
             ty = my_padded + max(0, ty - teeth_padding_y)
             tw = min(image.shape[1] - tx, tw + 2 * teeth_padding_x)
