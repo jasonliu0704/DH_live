@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import dlib
 import os.path
+import bz2
 
 def detect_teeth(image_path):
     """
@@ -40,10 +41,19 @@ def detect_teeth(image_path):
     
     # Convert to grayscale
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    faces = detector(gray)
+    
+    # Enhance contrast using CLAHE
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    enhanced_gray = clahe.apply(gray)
+    
+    # Detect faces in enhanced image
+    faces = detector(enhanced_gray)
     
     if len(faces) == 0:
-        raise ValueError("No faces detected in the image")
+        # Try with original grayscale if enhanced fails
+        faces = detector(gray)
+        if len(faces) == 0:
+            raise ValueError("No faces detected in the image")
     
     teeth_image = None
     teeth_rect = None
@@ -51,7 +61,7 @@ def detect_teeth(image_path):
     for face in faces:
         landmarks = predictor(gray, face)
         
-        # Extract mouth region using landmarks with padding
+        # Extract mouth region using landmarks with more padding
         mouth_points = []
         for i in range(48, 68):  # Landmarks 48-67 represent the mouth region
             x = landmarks.part(i).x
@@ -62,9 +72,9 @@ def detect_teeth(image_path):
         mouth_rect = cv2.boundingRect(mouth_points)
         mx, my, mw, mh = mouth_rect
         
-        # Add padding to mouth region (15% on each side)
-        padding_x = int(mw * 0.15)
-        padding_y = int(mh * 0.15)
+        # Add more padding to mouth region (25% on each side)
+        padding_x = int(mw * 0.25)
+        padding_y = int(mh * 0.25)
         
         # Ensure padded coordinates stay within image bounds
         mx_padded = max(0, mx - padding_x)
@@ -73,21 +83,22 @@ def detect_teeth(image_path):
         mh_padded = min(image.shape[0] - my_padded, mh + 2 * padding_y)
         
         # Extract mouth region with padding
-        mouth_roi = gray[my_padded:my_padded+mh_padded, mx_padded:mx_padded+mw_padded]
+        mouth_roi = enhanced_gray[my_padded:my_padded+mh_padded, mx_padded:mx_padded+mw_padded]
         
         # Try multiple thresholding techniques
         teeth_regions = []
         
-        # 1. Adaptive threshold
+        # 1. Adaptive threshold with smaller block size
         adaptive_thresh = cv2.adaptiveThreshold(
             mouth_roi, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-            cv2.THRESH_BINARY, 11, 2
+            cv2.THRESH_BINARY, 9, 2
         )
         teeth_regions.append(adaptive_thresh)
         
-        # 2. Original fixed threshold but with lower value
-        _, fixed_thresh = cv2.threshold(mouth_roi, 130, 255, cv2.THRESH_BINARY)
-        teeth_regions.append(fixed_thresh)
+        # 2. Range of fixed thresholds
+        for threshold_val in [120, 140, 160]:
+            _, fixed_thresh = cv2.threshold(mouth_roi, threshold_val, 255, cv2.THRESH_BINARY)
+            teeth_regions.append(fixed_thresh)
         
         # 3. Otsu's thresholding
         _, otsu_thresh = cv2.threshold(mouth_roi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
@@ -99,23 +110,26 @@ def detect_teeth(image_path):
             combined_thresh = cv2.bitwise_or(combined_thresh, region)
         
         # Clean up using morphological operations
-        kernel = np.ones((3, 3), np.uint8)  # Smaller kernel for finer details
+        kernel = np.ones((3, 3), np.uint8)
         opening = cv2.morphologyEx(combined_thresh, cv2.MORPH_OPEN, kernel)
         
+        # Additional closing to connect nearby teeth regions
+        closing = cv2.morphologyEx(opening, cv2.MORPH_CLOSE, kernel)
+        
         # Find contours
-        contours, _ = cv2.findContours(opening, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(closing, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         # Filter contours - lower area threshold
         valid_contours = []
         for contour in contours:
             area = cv2.contourArea(contour)
-            if area > 50:  # Lower minimum area threshold
+            if area > 30:  # Even lower minimum area threshold
                 valid_contours.append(contour)
         
         # Combine all detected teeth regions
         if valid_contours:
             # Create mask for all teeth contours
-            teeth_mask = np.zeros_like(opening)
+            teeth_mask = np.zeros_like(closing)
             for contour in valid_contours:
                 cv2.drawContours(teeth_mask, [contour], -1, 255, -1)
             
@@ -123,9 +137,9 @@ def detect_teeth(image_path):
             teeth_contours_combined = np.vstack([cnt for cnt in valid_contours])
             tx, ty, tw, th = cv2.boundingRect(teeth_contours_combined)
             
-            # Add padding to teeth region (10%)
-            teeth_padding_x = int(tw * 0.1)
-            teeth_padding_y = int(th * 0.1)
+            # Add more padding to teeth region (20%)
+            teeth_padding_x = int(tw * 0.2)
+            teeth_padding_y = int(th * 0.2)
             
             # Convert to original image coordinates with padding
             tx = mx_padded + max(0, tx - teeth_padding_x)
@@ -146,7 +160,6 @@ def detect_teeth(image_path):
 
 if __name__ == "__main__":
     import sys
-    import bz2
 
     if len(sys.argv) < 2:
         print("Usage: python teeth.py <image_path>")
