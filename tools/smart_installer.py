@@ -63,10 +63,15 @@ class SmartInstaller:
         self.environment = environment
         self.verbose = verbose
         self.system_info = self._get_system_info()
-        self.attempted_solutions = set()
+        self.attempted_solutions = set()  # Track all attempted solution commands
+        self.attempted_package_solutions = {}  # Track solutions attempted per package
+        self.installed_packages = {}  # Track successfully installed packages and their versions
         
         # Try to initialize Google Cloud resources
         self.vertex_ai_available = self._init_google_cloud()
+        
+        # Try to get currently installed packages
+        self._collect_installed_packages()
 
     def _init_google_cloud(self) -> bool:
         """Initialize Google Cloud resources and credentials"""
@@ -227,6 +232,20 @@ class SmartInstaller:
             except:
                 return False
 
+    def _collect_installed_packages(self):
+        """Collect information about currently installed packages"""
+        try:
+            output = subprocess.check_output(
+                [sys.executable, '-m', 'pip', 'list', '--format=json'],
+                universal_newlines=True
+            )
+            packages = json.loads(output)
+            for pkg in packages:
+                self.installed_packages[pkg['name'].lower()] = pkg['version']
+            logger.info(f"Found {len(self.installed_packages)} installed packages")
+        except Exception as e:
+            logger.warning(f"Could not collect installed packages: {e}")
+
     def read_requirements(self) -> List[str]:
         """Read requirements from file"""
         if not os.path.exists(self.requirements_file):
@@ -248,6 +267,9 @@ class SmartInstaller:
         """Main method to install all packages from requirements"""
         requirements = self.read_requirements()
         
+        # Pre-check for potential conflicts
+        requirements = self._precheck_requirements(requirements)
+        
         # Track successfully installed packages
         successful = []
         failed = []
@@ -258,6 +280,21 @@ class SmartInstaller:
                 success = self.install_package(req)
                 if success:
                     successful.append(req)
+                    
+                    # Update our record of installed packages
+                    package_name = req.split('==')[0].lower() if '==' in req else req.lower()
+                    try:
+                        # Get the actually installed version
+                        output = subprocess.check_output(
+                            [sys.executable, '-m', 'pip', 'show', package_name],
+                            universal_newlines=True
+                        )
+                        for line in output.splitlines():
+                            if line.startswith('Version:'):
+                                self.installed_packages[package_name] = line.split(':', 1)[1].strip()
+                                break
+                    except Exception:
+                        pass
                 else:
                     failed.append(req)
             except KeyboardInterrupt:
@@ -272,9 +309,71 @@ class SmartInstaller:
         
         return len(failed) == 0
 
+    def _precheck_requirements(self, requirements: List[str]) -> List[str]:
+        """
+        Pre-check requirements for conflicts and optimize installation order
+        Returns potentially modified requirements list
+        """
+        updated_requirements = []
+        
+        for req in requirements:
+            package_name = req.split('==')[0].lower() if '==' in req else req.lower()
+            requested_version = req.split('==')[1] if '==' in req else None
+            
+            # Check if this is already installed
+            if package_name in self.installed_packages:
+                if requested_version and self.installed_packages[package_name] != requested_version:
+                    logger.info(f"Package {package_name} is already installed with version {self.installed_packages[package_name]}, " +
+                                f"but version {requested_version} was requested")
+                    
+                    # Check if the installed version satisfies other requirements
+                    # For simplicity, we just warn and proceed with the requested version
+                else:
+                    logger.info(f"Package {package_name} is already installed with version {self.installed_packages[package_name]}")
+            
+            # Try to detect potential conflicts with dependencies
+            if self.use_conda:
+                # Conda has its own dependency resolution mechanism
+                updated_requirements.append(req)
+            else:
+                try:
+                    # Check what pip would do in a dry run
+                    cmd = [sys.executable, '-m', 'pip', 'install', '--dry-run', req]
+                    output = subprocess.check_output(cmd, universal_newlines=True, stderr=subprocess.STDOUT)
+                    
+                    if "Would install" in output:
+                        logger.info(f"Installing {req} would also install its dependencies")
+                    
+                    updated_requirements.append(req)
+                except subprocess.CalledProcessError as e:
+                    # If there's a dependency conflict, pip dry-run will fail
+                    if "dependency conflict" in e.output:
+                        logger.warning(f"Detected dependency conflict for {req}: {e.output}")
+                        # Try to find a compatible version
+                        if requested_version:
+                            logger.info(f"Will try to install {package_name} without version constraint")
+                            updated_requirements.append(package_name)  # Try without version constraint
+                        else:
+                            # If no specific version is requested but there's a conflict,
+                            # we might need a newer version or specific dependencies first
+                            logger.warning(f"Adding {req} as is, but it might fail")
+                            updated_requirements.append(req)
+                    else:
+                        updated_requirements.append(req)
+                except Exception as e:
+                    logger.warning(f"Error in dependency pre-check for {req}: {e}")
+                    updated_requirements.append(req)
+        
+        return updated_requirements
+
     def install_package(self, package: str) -> bool:
         """Attempt to install a single package with retries and troubleshooting"""
         retries = 0
+        package_name = package.split('==')[0].lower() if '==' in package else package.lower()
+        
+        # Initialize solutions tracking for this package if not exists
+        if package_name not in self.attempted_package_solutions:
+            self.attempted_package_solutions[package_name] = set()
         
         while retries < self.max_retries:
             cmd = self._build_install_command(package)
@@ -304,46 +403,56 @@ class SmartInstaller:
                 # Get troubleshooting command
                 solution_cmd = self.get_solution(package, output)
                 if solution_cmd:
-                    logger.info(f"Applying solution: {solution_cmd}")
-                    
-                    # Execute the solution command with timeout
-                    try:
-                        # Use non-interactive mode to prevent hanging on prompts
-                        env = os.environ.copy()
-                        env["DEBIAN_FRONTEND"] = "noninteractive"
+                    # Check if we've already tried this solution for this package
+                    solution_key = f"{package}:{solution_cmd}"
+                    if solution_key in self.attempted_solutions:
+                        logger.warning(f"Already tried solution: {solution_cmd}")
+                        solution_cmd = None
+                    else:
+                        logger.info(f"Applying solution: {solution_cmd}")
+                        # Add to global and package-specific tracking
+                        self.attempted_solutions.add(solution_key)
+                        self.attempted_package_solutions[package_name].add(solution_cmd)
                         
-                        # Run with timeout to prevent hanging
-                        solution_process = subprocess.run(
-                            solution_cmd, 
-                            shell=True,
-                            text=True, 
-                            capture_output=True,
-                            timeout=300,  # 5-minute timeout
-                            env=env,
-                            check=False  # Don't raise exception on non-zero return
-                        )
-                        
-                        if solution_process.returncode == 0:
-                            logger.info(f"Solution command completed: {solution_process.stdout}")
-                        else:
-                            logger.warning(f"Solution command failed with code {solution_process.returncode}")
-                            logger.warning(f"Error output: {solution_process.stderr}")
-                            
-                    except subprocess.TimeoutExpired:
-                        logger.error(f"Solution command timed out after 5 minutes: {solution_cmd}")
-                        # Try to kill the process if it's still running
+                        # Execute the solution command with timeout
                         try:
-                            import psutil
-                            for proc in psutil.process_iter():
-                                try:
-                                    cmdline = ' '.join(proc.cmdline())
-                                    if solution_cmd in cmdline:
-                                        logger.warning(f"Killing stalled process: {proc.pid}")
-                                        proc.kill()
-                                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                                    pass
-                        except ImportError:
-                            logger.warning("psutil not available, cannot kill stalled process")
+                            # Use non-interactive mode to prevent hanging on prompts
+                            env = os.environ.copy()
+                            env["DEBIAN_FRONTEND"] = "noninteractive"
+                            
+                            # Run with timeout to prevent hanging
+                            solution_process = subprocess.run(
+                                solution_cmd, 
+                                shell=True,
+                                text=True, 
+                                capture_output=True,
+                                timeout=300,  # 5-minute timeout
+                                env=env,
+                                check=False  # Don't raise exception on non-zero return
+                            )
+                            
+                            if solution_process.returncode == 0:
+                                logger.info(f"Solution command completed: {solution_process.stdout}")
+                            else:
+                                logger.warning(f"Solution command failed with code {solution_process.returncode}")
+                                logger.warning(f"Error output: {solution_process.stderr}")
+                                
+                        except subprocess.TimeoutExpired:
+                            logger.error(f"Solution command timed out after 5 minutes: {solution_cmd}")
+                            # Try to kill the process if it's still running
+                            try:
+                                import psutil
+                                for proc in psutil.process_iter():
+                                    try:
+                                        cmdline = ' '.join(proc.cmdline())
+                                        if solution_cmd in cmdline:
+                                            logger.warning(f"Killing stalled process: {proc.pid}")
+                                            proc.kill()
+                                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                        pass
+                            except ImportError:
+                                logger.warning("psutil not available, cannot kill stalled process")
+                
             except subprocess.TimeoutExpired:
                 logger.error(f"Installation command timed out after 10 minutes")
             except Exception as e:
@@ -391,16 +500,63 @@ class SmartInstaller:
 
     def get_solution(self, package: str, error_output: str) -> Optional[str]:
         """Get solution command for installation error with OS awareness"""
-        # Try package-specific OS solutions first
+        package_name = package.split('==')[0].lower() if '==' in package else package.lower()
+        
+        # Try OS-specific solutions first, but check if already tried
         os_solution = self._get_os_specific_solution(package, error_output)
-        if os_solution:
+        if os_solution and os_solution not in self.attempted_package_solutions.get(package_name, set()):
             return os_solution
             
-        # Then try Vertex AI if available
+        # Try version resolution if there's a conflict
+        if "dependency conflict" in error_output or "incompatible" in error_output:
+            version_solution = self._resolve_version_conflict(package, error_output)
+            if version_solution and version_solution not in self.attempted_package_solutions.get(package_name, set()):
+                return version_solution
+            
+        # Try Vertex AI if available
         if self.vertex_ai_available:
-            return self._get_vertex_ai_solution(package, error_output)
-        else:
-            return self._get_fallback_solution(package, error_output)
+            ai_solution = self._get_vertex_ai_solution(package, error_output)
+            if ai_solution and ai_solution not in self.attempted_package_solutions.get(package_name, set()):
+                return ai_solution
+                
+        # Try fallback solutions
+        fallback_solution = self._get_fallback_solution(package, error_output)
+        if fallback_solution and fallback_solution not in self.attempted_package_solutions.get(package_name, set()):
+            return fallback_solution
+            
+        return None
+
+    def _resolve_version_conflict(self, package: str, error_output: str) -> Optional[str]:
+        """Try to resolve version conflicts"""
+        package_name = package.split('==')[0].lower() if '==' in package else package.lower()
+        requested_version = package.split('==')[1] if '==' in package else None
+        
+        # Extract potential conflicting packages from error output
+        conflicts = []
+        for line in error_output.splitlines():
+            if "requires" in line and "," in line:
+                parts = line.split("requires")
+                if len(parts) > 1 and package_name in parts[0].lower():
+                    req_part = parts[1].strip()
+                    if "," in req_part:
+                        conflicts.append(req_part.split(",")[0].strip())
+        
+        if conflicts:
+            logger.info(f"Detected conflicts with: {conflicts}")
+            
+            # Strategy 1: Try with --upgrade flag
+            if not requested_version:
+                return f"{sys.executable} -m pip install --upgrade {package}"
+                
+            # Strategy 2: Try with --upgrade-strategy eager
+            return f"{sys.executable} -m pip install --upgrade --upgrade-strategy eager {package}"
+            
+        # If we can't identify specific conflicts but there's a version issue
+        if requested_version and ("requires" in error_output or "dependency conflict" in error_output):
+            # Try without the version constraint as a fallback
+            return f"{sys.executable} -m pip install {package_name} --no-dependencies"
+            
+        return None
 
     def _get_os_specific_solution(self, package: str, error_output: str) -> Optional[str]:
         """Check for OS-specific installation issues and solutions"""
@@ -600,12 +756,10 @@ class SmartInstaller:
             # Extract command from response
             solution_cmd = response.text.strip()
             
-            # Ignore solutions we've already tried
-            if solution_cmd in self.attempted_solutions:
-                logger.info(f"Ignoring previously attempted solution: {solution_cmd}")
+            # Check if this specific solution has been tried
+            if solution_cmd in self.attempted_package_solutions.get(package_name, set()):
+                logger.info(f"AI suggested a previously attempted solution: {solution_cmd}")
                 return None
-            
-            self.attempted_solutions.add(solution_cmd)
             
             # Don't return "NONE" as a command
             if solution_cmd == "NONE":
