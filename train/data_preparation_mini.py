@@ -303,19 +303,20 @@ def run(video_path, export_imgs=True, gpu_id=0):
                         try:
                             teeth_img, teeth_rect = detect_teeth(img_path, gpu_id=gpu_id)
                             logging.info(f"Teeth detected for image {img_path}: {teeth_rect}")
+                            if teeth_img is not None:
+                                cv2.imwrite(teeth_out_path, teeth_img)
+                                teeth_results.append(teeth_rect)
+                            else:
+                                # Create an empty teeth image if detection failed
+                                img = cv2.imread(img_path)
+                                empty_teeth = np.zeros_like(img)
+                                cv2.imwrite(teeth_out_path, empty_teeth)
+                                teeth_results.append([0, 0, 0, 0])
                         except Exception as e:
                             logging.error(f"Teeth detection failed for {img_path} with error: {e}")
                         teeth_out_path = os.path.join(video_data_path, "teeth_seg", os.path.basename(img_path))
                         
-                        if teeth_img is not None:
-                            cv2.imwrite(teeth_out_path, teeth_img)
-                            teeth_results.append(teeth_rect)
-                        else:
-                            # Create an empty teeth image if detection failed
-                            img = cv2.imread(img_path)
-                            empty_teeth = np.zeros_like(img)
-                            cv2.imwrite(teeth_out_path, empty_teeth)
-                            teeth_results.append([0, 0, 0, 0])
+                        
                         
                         pbar.update(1)
                     
