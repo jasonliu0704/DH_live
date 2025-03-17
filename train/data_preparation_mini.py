@@ -170,7 +170,7 @@ def run(video_path, export_imgs = True):
     video_data_path = os.path.join(os.path.dirname(video_path), video_name)
     if os.path.exists(video_data_path):
         print(f"Skipping {video_data_path} as it already exists")
-        return
+        # return
     os.makedirs(video_data_path, exist_ok=True)
 
     if export_imgs:
