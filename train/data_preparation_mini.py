@@ -42,14 +42,8 @@ def detect_face(frame):
     """
     Detect face in frame and return detection status and face rectangle
     """
-    # Use CUDA for image preprocessing if available
-    if CUDA_AVAILABLE and hasattr(cv2, 'cuda'):
-        gpu_frame = cv2.cuda_GpuMat()
-        gpu_frame.upload(frame)
-        rgb_frame = cv2.cuda.cvtColor(gpu_frame, cv2.COLOR_BGR2RGB)
-        rgb_frame = rgb_frame.download()
-    else:
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    # Always use CPU-based color conversion
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     
     with mp_face_detection.FaceDetection(
             model_selection=1, min_detection_confidence=0.5) as face_detection:
@@ -92,14 +86,8 @@ def detect_face_mesh(frame):
     """
     Detect face mesh landmarks using MediaPipe
     """
-    # Use CUDA for image preprocessing if available
-    if CUDA_AVAILABLE and hasattr(cv2, 'cuda'):
-        gpu_frame = cv2.cuda_GpuMat()
-        gpu_frame.upload(frame)
-        rgb_frame = cv2.cuda.cvtColor(gpu_frame, cv2.COLOR_BGR2RGB)
-        rgb_frame = rgb_frame.download()
-    else:
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    # Always use CPU-based color conversion
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     
     with mp_face_mesh.FaceMesh(
             static_image_mode=True,
@@ -138,27 +126,13 @@ def ExtractFromVideo(video_path, gpu_id=0):
     pts_3d = np.zeros([totalFrames, 478, 3])
     face_rect_list = []
 
-    # Set CUDA device for this thread if available
-    if CUDA_AVAILABLE:
-        cv2.cuda.setDevice(gpu_id)
-        
-    # Pre-allocate GPU resources if available
-    if CUDA_AVAILABLE and hasattr(cv2, 'cuda'):
-        gpu_frame = cv2.cuda_GpuMat()
-    
     for frame_index in tqdm.tqdm(range(totalFrames), desc="Extracting frames"):
         logging.debug(f"Processing frame {frame_index}")
         ret, frame = cap.read()
         if ret is False:
             break
             
-        # Use CUDA for frame processing if available
-        if CUDA_AVAILABLE and hasattr(cv2, 'cuda'):
-            gpu_frame.upload(frame)
-            # Potential CUDA operations on gpu_frame here
-            processed_frame = gpu_frame.download()
-        else:
-            processed_frame = frame
+        processed_frame = frame  # Always process on CPU
             
         tag_, rect = detect_face(processed_frame)
         
@@ -206,12 +180,6 @@ def ExtractFromVideo(video_path, gpu_id=0):
     logging.info("Finished frame extraction")
     cap.release()
     
-    # Cleanup CUDA resources
-    if CUDA_AVAILABLE and hasattr(cv2, 'cuda'):
-        if 'gpu_frame' in locals():
-            gpu_frame.release()
-        cv2.cuda.Stream.Null.waitForCompletion()
-        
     return pts_3d
 
 
