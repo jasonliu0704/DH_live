@@ -19,6 +19,10 @@ import mediapipe as mp
 from mini_live.teeth import detect_teeth
 import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import multiprocessing
+import logging
+
+logging.basicConfig(level=logging.INFO)
 
 # Check for CUDA availability
 CUDA_AVAILABLE = torch.cuda.is_available()
@@ -34,6 +38,7 @@ point_color = (0, 0, 255)  # BGR
 thickness = 4  # 0 、4、8
 
 def detect_face(frame):
+    logging.info("Starting detect_face")
     """
     Detect face in frame and return detection status and face rectangle
     """
@@ -68,6 +73,7 @@ def detect_face(frame):
             return -3, out_rect
         if rect.width * w < 100 or rect.height * h < 100:
             return -4, out_rect
+    logging.info(f"Face detection status: {tag_}, bounding box: {out_rect}")
     return 1, out_rect
 
 
@@ -116,6 +122,7 @@ def detect_face_mesh(frame):
 
 
 def ExtractFromVideo(video_path, gpu_id=0):
+    logging.info(f"Extracting frames from video: {video_path} on GPU {gpu_id}")
     """
     Extract face landmarks from video frames using GPU acceleration
     """
@@ -140,6 +147,7 @@ def ExtractFromVideo(video_path, gpu_id=0):
         gpu_frame = cv2.cuda_GpuMat()
     
     for frame_index in tqdm.tqdm(range(totalFrames), desc="Extracting frames"):
+        logging.debug(f"Processing frame {frame_index}")
         ret, frame = cap.read()
         if ret is False:
             break
@@ -194,7 +202,8 @@ def ExtractFromVideo(video_path, gpu_id=0):
         frame_face = processed_frame[y_min:y_max, x_min:x_max]
         frame_kps = detect_face_mesh(frame_face)
         pts_3d[frame_index] = frame_kps + np.array([x_min, y_min, 0])
-        
+        logging.info(f"Frame {frame_index}: detected face rect: {rect}")
+    logging.info("Finished frame extraction")
     cap.release()
     
     # Cleanup CUDA resources
@@ -233,6 +242,7 @@ def detect_teeth_batch(img_paths, batch_size=4, gpu_id=0):
 
 
 def run(video_path, export_imgs=True, gpu_id=0):
+    logging.info(f"Starting run() for video: {video_path} with GPU {gpu_id}")
     """
     Process video for talking face animation
     """
@@ -245,6 +255,7 @@ def run(video_path, export_imgs=True, gpu_id=0):
     os.makedirs(video_data_path, exist_ok=True)
 
     if export_imgs:
+        logging.info("Beginning teeth detection on extracted frames")
         # Set environment variable for CUDA device
         if CUDA_AVAILABLE:
             os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
@@ -288,7 +299,12 @@ def run(video_path, export_imgs=True, gpu_id=0):
                 for i in range(0, len(img_filelist), batch_size):
                     batch = img_filelist[i:min(i+batch_size, len(img_filelist))]
                     for img_path in batch:
-                        teeth_img, teeth_rect = detect_teeth(img_path, gpu_id=gpu_id)
+                        logging.debug(f"Processing image: {img_path}")
+                        try:
+                            teeth_img, teeth_rect = detect_teeth(img_path, gpu_id=gpu_id)
+                            logging.info(f"Teeth detected for image {img_path}: {teeth_rect}")
+                        except Exception as e:
+                            logging.error(f"Teeth detection failed for {img_path} with error: {e}")
                         teeth_out_path = os.path.join(video_data_path, "teeth_seg", os.path.basename(img_path))
                         
                         if teeth_img is not None:
@@ -310,7 +326,12 @@ def run(video_path, export_imgs=True, gpu_id=0):
             # Process sequentially for smaller datasets
             teeth_results = []
             for img_path in tqdm.tqdm(img_filelist, desc="Detecting teeth"):
-                teeth_img, teeth_rect = detect_teeth(img_path, gpu_id=gpu_id)
+                logging.debug(f"Processing image: {img_path}")
+                try:
+                    teeth_img, teeth_rect = detect_teeth(img_path, gpu_id=gpu_id)
+                    logging.info(f"Teeth detected for image {img_path}: {teeth_rect}")
+                except Exception as e:
+                    logging.error(f"Teeth detection failed for {img_path} with error: {e}")
                 teeth_out_path = os.path.join(video_data_path, "teeth_seg", os.path.basename(img_path))
                 
                 if teeth_img is not None:
@@ -323,6 +344,7 @@ def run(video_path, export_imgs=True, gpu_id=0):
                     cv2.imwrite(teeth_out_path, empty_teeth)
                     teeth_results.append([0, 0, 0, 0])
         
+        logging.info("Completed teeth detection for all frames")
         # Save all teeth rectangles to a file
         teeth_rect_array = np.array(teeth_results)
         np.savetxt(f"{video_data_path}/teeth_seg/all.txt", teeth_rect_array, fmt='%d')
@@ -368,12 +390,14 @@ def run(video_path, export_imgs=True, gpu_id=0):
     with open(f"{video_data_path}/face_mat_mask.pkl", "wb") as f:
         pickle.dump([mat_list, face_pts_mean_personal], f)
         
+    logging.info("Completed face landmark processing and mask calculation")
     # Cleanup GPU memory
     if CUDA_AVAILABLE:
         torch.cuda.empty_cache()
 
 
 def run_parallel(video_path, gpu_id):
+    logging.info(f"run_parallel started for {video_path} on GPU {gpu_id}")
     """
     Run processing for one video on specified GPU
     """
@@ -385,15 +409,17 @@ def run_parallel(video_path, gpu_id):
     try:
         run(video_path, gpu_id=gpu_id)
     except Exception as e:
-        print(f"Error processing {video_path} on GPU {gpu_id}: {e}")
+        logging.error(f"Error processing video {video_path} on GPU {gpu_id}: {e}")
         traceback.print_exc()
     finally:
+        logging.info("Cleaning up GPU memory in run_parallel")
         # Cleanup
         if CUDA_AVAILABLE:
             torch.cuda.empty_cache()
 
 
 def main():
+    logging.info("Starting main() for parallel video processing")
     """
     Main entry point for parallel processing of videos
     """
@@ -405,6 +431,7 @@ def main():
     print(f"Video dir is set to: {data_dir}")
     video_files = glob.glob(f"{data_dir}/*.mp4")
     print(f"Found {len(video_files)} videos to process")
+    logging.info(f"Found {len(video_files)} videos to process")
     
     # Number of GPUs available
     ngpu = torch.cuda.device_count() if CUDA_AVAILABLE else 1
@@ -417,9 +444,12 @@ def main():
         for future in tqdm.tqdm(as_completed(futures), total=len(futures), desc="Overall progress"):
             try:
                 future.result()
+                logging.info("A worker finished successfully")
             except Exception as e:
-                print(f"Error in worker: {e}")
+                logging.error(f"Error in a worker: {e}")
 
 
 if __name__ == "__main__":
+    multiprocessing.set_start_method('spawn', force=True)
+    logging.info("Multiprocessing start method set to spawn")
     main()
