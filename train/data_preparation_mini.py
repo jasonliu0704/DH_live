@@ -174,43 +174,43 @@ def run(video_path, export_imgs = True):
     os.makedirs(video_data_path, exist_ok=True)
 
     if export_imgs:
-        # 计算整个视频中人脸的范围
-        x_min, y_min, x_max, y_max = np.min(pts_3d[:, :, 0]), np.min(
-            pts_3d[:, :, 1]), np.max(
-            pts_3d[:, :, 0]), np.max(pts_3d[:, :, 1])
-        new_w = int((x_max - x_min) * 0.55) * 2
-        new_h = int((y_max - y_min) * 0.6) * 2
-        center_x = int((x_max + x_min) / 2.)
-        center_y = int(y_min + (y_max - y_min) * 0.6)
-        size = max(new_h, new_w)
-        x_min, y_min, x_max, y_max = int(center_x - size // 2), int(center_y - size // 2), int(
-            center_x + size // 2), int(center_y + size // 2)
+        # # 计算整个视频中人脸的范围
+        # x_min, y_min, x_max, y_max = np.min(pts_3d[:, :, 0]), np.min(
+        #     pts_3d[:, :, 1]), np.max(
+        #     pts_3d[:, :, 0]), np.max(pts_3d[:, :, 1])
+        # new_w = int((x_max - x_min) * 0.55) * 2
+        # new_h = int((y_max - y_min) * 0.6) * 2
+        # center_x = int((x_max + x_min) / 2.)
+        # center_y = int(y_min + (y_max - y_min) * 0.6)
+        # size = max(new_h, new_w)
+        # x_min, y_min, x_max, y_max = int(center_x - size // 2), int(center_y - size // 2), int(
+        #     center_x + size // 2), int(center_y + size // 2)
 
-        # 确定裁剪区域上边top和左边left坐标
-        top = y_min
-        left = x_min
-        # 裁剪区域与原图的重合区域
-        top_coincidence = int(max(top, 0))
-        bottom_coincidence = int(min(y_max, vid_height))
-        left_coincidence = int(max(left, 0))
-        right_coincidence = int(min(x_max, vid_width))
-        print("人脸活动范围：{}:{}, {}:{}".format(top_coincidence, bottom_coincidence, left_coincidence, right_coincidence))
-        out_size = 512
-        scale = 512. / size
-        pts_3d = (pts_3d - np.array([left_coincidence, top_coincidence, 0])) * scale
-        Path_output_pkl = "{}/keypoint_rotate.pkl".format(video_data_path)
-        with open(Path_output_pkl, "wb") as f:
-            pickle.dump(pts_3d, f)
-        os.makedirs("{}/image".format(video_data_path), exist_ok=True)
-        ffmpeg_cmd = "ffmpeg -i {} -vf crop={}:{}:{}:{},scale=512:512:flags=neighbor -loglevel quiet -y {}/image/%06d.png".format(
-            video_path,
-            right_coincidence - left_coincidence,
-            bottom_coincidence - top_coincidence,
-            left_coincidence,
-            top_coincidence,
-            video_data_path
-        )
-        os.system(ffmpeg_cmd)
+        # # 确定裁剪区域上边top和左边left坐标
+        # top = y_min
+        # left = x_min
+        # # 裁剪区域与原图的重合区域
+        # top_coincidence = int(max(top, 0))
+        # bottom_coincidence = int(min(y_max, vid_height))
+        # left_coincidence = int(max(left, 0))
+        # right_coincidence = int(min(x_max, vid_width))
+        # print("人脸活动范围：{}:{}, {}:{}".format(top_coincidence, bottom_coincidence, left_coincidence, right_coincidence))
+        # out_size = 512
+        # scale = 512. / size
+        # pts_3d = (pts_3d - np.array([left_coincidence, top_coincidence, 0])) * scale
+        # Path_output_pkl = "{}/keypoint_rotate.pkl".format(video_data_path)
+        # with open(Path_output_pkl, "wb") as f:
+        #     pickle.dump(pts_3d, f)
+        # os.makedirs("{}/image".format(video_data_path), exist_ok=True)
+        # ffmpeg_cmd = "ffmpeg -i {} -vf crop={}:{}:{}:{},scale=512:512:flags=neighbor -loglevel quiet -y {}/image/%06d.png".format(
+        #     video_path,
+        #     right_coincidence - left_coincidence,
+        #     bottom_coincidence - top_coincidence,
+        #     left_coincidence,
+        #     top_coincidence,
+        #     video_data_path
+        # )
+        # os.system(ffmpeg_cmd)
 
          # Add teeth detection and segmentation
         os.makedirs("{}/teeth_seg".format(video_data_path), exist_ok=True)
@@ -288,7 +288,7 @@ def run(video_path, export_imgs = True):
 
 import os
 import sys
-from glob import glob
+# from glob import glob
 import tqdm
 import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
