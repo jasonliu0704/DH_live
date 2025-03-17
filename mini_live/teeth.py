@@ -4,7 +4,14 @@ import dlib
 import os.path
 import bz2
 
-def detect_teeth(image_path):
+
+# Add CUDA support for dlib
+if dlib.DLIB_USE_CUDA:
+    print("Using CUDA for dlib")
+else:
+    print("CUDA not available for dlib")
+
+def detect_teeth(image_path, gpu_id=0):
     """
     Detect teeth in an image with improved accuracy for full teeth coverage
     
@@ -15,6 +22,10 @@ def detect_teeth(image_path):
         teeth_image: Cropped image of teeth region
         teeth_rect: Rectangle coordinates [x, y, width, height]
     """
+     # Set CUDA device
+    if dlib.DLIB_USE_CUDA:
+        cv2.cuda.setDevice(gpu_id)
+    
     # Load image
     image = cv2.imread(image_path)
     if image is None:
@@ -229,69 +240,60 @@ def detect_teeth(image_path):
 
 if __name__ == "__main__":
     import sys
+    import os
+    from tqdm import tqdm
 
     if len(sys.argv) < 2:
-        print("Usage: python teeth.py <image_path>")
+        print("Usage: python teeth.py <directory_path>")
         sys.exit(1)
     
-    image_path = sys.argv[1]
-    try:
-        teeth_img, teeth_coords = detect_teeth(image_path)
+    directory_path = sys.argv[1]
+    if not os.path.isdir(directory_path):
+        print(f"Error: {directory_path} is not a directory")
+        sys.exit(1)
+    
+    # Create output directory
+    image_dir = os.path.join(directory_path, "image")
+    output_dir = os.path.join(directory_path, "teeth_seg")
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Get list of images
+    image_files = [f for f in os.listdir(image_dir) 
+                  if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+    
+    print(f"Processing {len(image_files)} images...")
+    teeth_rect_list = []
+    
+    # Process each image with progress bar
+    for image_file in tqdm(image_files, desc="Detecting teeth"):
+        input_path = os.path.join(image_dir, image_file)
+        output_path = os.path.join(output_dir, image_file)
         
-        if teeth_img is not None:
-            print(f"Teeth detected at coordinates: {teeth_coords}")
-            output_path = f"teeth_{os.path.splitext(os.path.basename(image_path))[0]}.jpg"
-            cv2.imwrite(output_path, teeth_img)
-            print(f"Saved teeth image to {output_path}")
+        try:
+            teeth_img, teeth_coords = detect_teeth(input_path)
             
-            # Save debug visualization of the detected region on original image with face rectangle
-            debug_img = cv2.imread(image_path)
-            if debug_img is not None and teeth_coords:
-                # Draw face rectangle
-                detector = dlib.get_frontal_face_detector()
-                faces = detector(cv2.cvtColor(debug_img, cv2.COLOR_BGR2GRAY))
-                for face in faces:
-                    face_x = face.left()
-                    face_y = face.top()
-                    face_w = face.width()
-                    face_h = face.height()
-                    cv2.rectangle(debug_img, (face_x, face_y), (face_x+face_w, face_y+face_h), (255, 0, 0), 2)
+            if teeth_img is not None:
+                # Save teeth image
+                cv2.imwrite(output_path, teeth_img)
+                teeth_rect_list.append(teeth_coords)
+            else:
+                # Create empty image with same size as input
+                original_img = cv2.imread(input_path)
+                empty_img = np.zeros_like(original_img)
+                cv2.imwrite(output_path, empty_img)
+                teeth_rect_list.append([0, 0, 0, 0])
                 
-                # Draw teeth rectangle
-                x, y, w, h = teeth_coords
-                cv2.rectangle(debug_img, (x, y), (x+w, y+h), (0, 255, 0), 2)
-                
-                debug_output = f"debug_{os.path.splitext(os.path.basename(image_path))[0]}.jpg"
-                cv2.imwrite(debug_output, debug_img)
-                print(f"Saved debug image to {debug_output}")
-            
-            # cv2.imshow('Detected Teeth', teeth_img)
-            cv2.waitKey(0)
-            cv2.destroyAllWindows()
-        else:
-            print("No teeth detected in the image")
-            # Save debug visualization showing the face detection
-            debug_img = cv2.imread(image_path)
-            if debug_img is not None:
-                gray = cv2.cvtColor(debug_img, cv2.COLOR_BGR2GRAY)
-                detector = dlib.get_frontal_face_detector()
-                predictor = dlib.shape_predictor('shape_predictor_68_face_landmarks.dat')
-                faces = detector(gray)
-                
-                for face in faces:
-                    # Draw face rectangle
-                    x, y, w, h = face.left(), face.top(), face.width(), face.height()
-                    cv2.rectangle(debug_img, (x, y), (x+w, y+h), (255, 0, 0), 2)
-                    
-                    # Draw mouth landmarks
-                    landmarks = predictor(gray, face)
-                    for i in range(48, 68):  # Mouth landmarks
-                        x = landmarks.part(i).x
-                        y = landmarks.part(i).y
-                        cv2.circle(debug_img, (x, y), 2, (0, 0, 255), -1)
-                
-                debug_output = f"debug_noTeeth_{os.path.splitext(os.path.basename(image_path))[0]}.jpg"
-                cv2.imwrite(debug_output, debug_img)
-                print(f"Saved debug image to {debug_output}")
-    except Exception as e:
-        print(f"Error: {e}")
+        except Exception as e:
+            print(f"\nError processing {image_file}: {e}")
+            # Create empty image for failed detection
+            original_img = cv2.imread(input_path)
+            empty_img = np.zeros_like(original_img)
+            cv2.imwrite(output_path, empty_img)
+            teeth_rect_list.append([0, 0, 0, 0])
+    
+    # Save all teeth coordinates
+    coords_path = os.path.join(output_dir, "all.txt")
+    np.savetxt(coords_path, np.array(teeth_rect_list), fmt='%d')
+    
+    print(f"\nProcessing complete. Results saved in {output_dir}")
+    print(f"Coordinates saved to {coords_path}")
