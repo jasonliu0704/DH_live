@@ -311,7 +311,7 @@ def main():
         
     data_dir = sys.argv[1]
     print(f"Video dir is set to: {data_dir}")
-    video_files = glob("{}/*.mp4".format(data_dir))
+    video_files = glob.glob("{}/*.mp4".format(data_dir))
     
     # Number of GPUs available (you can also pass this as an argument)
     ngpu = 8  # or set to args.ngpu if you parse one
