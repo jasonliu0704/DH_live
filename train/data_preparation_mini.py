@@ -150,21 +150,21 @@ def ExtractFromVideo(video_path, circle = False):
 
 
 def run(video_path, export_imgs = True):
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        return 0
-    vid_width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)  # 宽度
-    vid_height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)  # 高度
+    # cap = cv2.VideoCapture(video_path)
+    # if not cap.isOpened():
+    #     return 0
+    # vid_width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)  # 宽度
+    # vid_height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)  # 高度
 
-    totalFrames = cap.get(cv2.CAP_PROP_FRAME_COUNT)  # 总帧数
-    totalFrames = int(totalFrames)
-    cap.release()
-    pts_3d = ExtractFromVideo(video_path)
-    if type(pts_3d) is np.ndarray and len(pts_3d) == totalFrames:
-        print("关键点已提取")
-    else:
-        print("error in video: {}!!!".format(video_path))
-        return
+    # totalFrames = cap.get(cv2.CAP_PROP_FRAME_COUNT)  # 总帧数
+    # totalFrames = int(totalFrames)
+    # cap.release()
+    # pts_3d = ExtractFromVideo(video_path)
+    # if type(pts_3d) is np.ndarray and len(pts_3d) == totalFrames:
+    #     print("关键点已提取")
+    # else:
+    #     print("error in video: {}!!!".format(video_path))
+    #     return
 
     video_name = os.path.basename(video_path).split(".")[0]
     video_data_path = os.path.join(os.path.dirname(video_path), video_name)
