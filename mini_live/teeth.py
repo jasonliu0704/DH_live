@@ -245,57 +245,83 @@ def detect_teeth(image_path, gpu_id=0):
     return teeth_image, teeth_rect
 
 def process_directory(directory_path, gpu_id):
-    if dlib.DLIB_USE_CUDA:
-        cv2.cuda.setDevice(gpu_id)
-    image_dir = os.path.join(directory_path, "image")
-    output_dir = os.path.join(directory_path, "teeth_seg")
-    os.makedirs(output_dir, exist_ok=True)
-
-    image_files = [
-        f for f in os.listdir(image_dir)
-        if f.lower().endswith(('.png', '.jpg', '.jpeg'))
-    ]
-    
-    # Now we can safely reference image_files
-    print(f"[GPU {gpu_id}] Processing directory: {directory_path} with {len(image_files)} images")
-
-    print(f"Processing {len(image_files)} images...")
-    teeth_rect_list = []
-    
-    # Process each image with progress bar
-    for image_file in tqdm(image_files, desc=f"Detecting teeth in {os.path.basename(directory_path)}"):
-        input_path = os.path.join(image_dir, image_file)
-        output_path = os.path.join(output_dir, image_file)
+    print(f"[GPU {gpu_id}] Starting to process directory: {directory_path}")
+    try:
+        # Set GPU if available
+        if dlib.DLIB_USE_CUDA:
+            cv2.cuda.setDevice(gpu_id)
         
-        try:
-            teeth_img, teeth_coords = detect_teeth(input_path, gpu_id=gpu_id)
+        image_dir = os.path.join(directory_path, "image")
+        output_dir = os.path.join(directory_path, "teeth_seg")
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Check if image directory exists
+        if not os.path.exists(image_dir):
+            print(f"[GPU {gpu_id}] Error: Image directory {image_dir} does not exist")
+            return
             
-            if teeth_img is not None:
-                # Save teeth image
-                cv2.imwrite(output_path, teeth_img)
-                teeth_rect_list.append(teeth_coords)
-            else:
-                # Create empty image with same size as input
+        if not os.path.isdir(image_dir):
+            print(f"[GPU {gpu_id}] Error: {image_dir} is not a directory")
+            return
+            
+        # Get list of images
+        try:
+            image_files = [
+                f for f in os.listdir(image_dir)
+                if f.lower().endswith(('.png', '.jpg', '.jpeg'))
+            ]
+        except Exception as e:
+            print(f"[GPU {gpu_id}] Error listing images in {image_dir}: {str(e)}")
+            return
+            
+        # Now we can safely reference image_files
+        print(f"[GPU {gpu_id}] Processing directory: {directory_path} with {len(image_files)} images")
+        
+        if len(image_files) == 0:
+            print(f"[GPU {gpu_id}] No images found in {image_dir}")
+            return
+            
+        print(f"Processing {len(image_files)} images...")
+        teeth_rect_list = []
+        
+        # Process each image with progress bar
+        for image_file in tqdm(image_files, desc=f"Detecting teeth in {os.path.basename(directory_path)}"):
+            input_path = os.path.join(image_dir, image_file)
+            output_path = os.path.join(output_dir, image_file)
+            
+            try:
+                teeth_img, teeth_coords = detect_teeth(input_path, gpu_id=gpu_id)
+                
+                if teeth_img is not None:
+                    # Save teeth image
+                    cv2.imwrite(output_path, teeth_img)
+                    teeth_rect_list.append(teeth_coords)
+                else:
+                    # Create empty image with same size as input
+                    original_img = cv2.imread(input_path)
+                    empty_img = np.zeros_like(original_img)
+                    cv2.imwrite(output_path, empty_img)
+                    teeth_rect_list.append([0, 0, 0, 0])
+                    
+            except Exception as e:
+                print(f"\nError processing {image_file}: {e}")
+                # Create empty image for failed detection
                 original_img = cv2.imread(input_path)
                 empty_img = np.zeros_like(original_img)
                 cv2.imwrite(output_path, empty_img)
                 teeth_rect_list.append([0, 0, 0, 0])
-                
-        except Exception as e:
-            print(f"\nError processing {image_file}: {e}")
-            # Create empty image for failed detection
-            original_img = cv2.imread(input_path)
-            empty_img = np.zeros_like(original_img)
-            cv2.imwrite(output_path, empty_img)
-            teeth_rect_list.append([0, 0, 0, 0])
-    
-    # Save all teeth coordinates
-    coords_path = os.path.join(output_dir, "all.txt")
-    np.savetxt(coords_path, np.array(teeth_rect_list), fmt='%d')
-    
-    print(f"[GPU {gpu_id}] Writing detection results to {coords_path}")
-    print(f"\nProcessing complete. Results saved in {output_dir}")
-    print(f"Coordinates saved to {coords_path}")
+        
+        # Save all teeth coordinates
+        coords_path = os.path.join(output_dir, "all.txt")
+        np.savetxt(coords_path, np.array(teeth_rect_list), fmt='%d')
+        
+        print(f"[GPU {gpu_id}] Writing detection results to {coords_path}")
+        print(f"\nProcessing complete. Results saved in {output_dir}")
+        print(f"Coordinates saved to {coords_path}")
+    except Exception as e:
+        print(f"[GPU {gpu_id}] Unexpected error in process_directory: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     import argparse, os
