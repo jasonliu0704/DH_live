@@ -20,8 +20,8 @@ try:
 except (AttributeError, Exception):
     DLIB_CUDA_AVAILABLE = False
 
-print(f"OpenCV CUDA support: {'Available' if OPENCV_CUDA_AVAILABLE else 'Not Available'}")
-print(f"dlib CUDA support: {'Available' if DLIB_CUDA_AVAILABLE else 'Not Available'}")
+# print(f"OpenCV CUDA support: {'Available' if OPENCV_CUDA_AVAILABLE else 'Not Available'}")
+# print(f"dlib CUDA support: {'Available' if DLIB_CUDA_AVAILABLE else 'Not Available'}")
 
 # Enable CUDA device selection for dlib if available
 if DLIB_CUDA_AVAILABLE:
