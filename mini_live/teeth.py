@@ -6,12 +6,23 @@ import bz2
 from concurrent.futures import ProcessPoolExecutor, wait
 from tqdm import tqdm
 
+# Check for actual CUDA support
+OPENCV_CUDA_AVAILABLE = False
+DLIB_CUDA_AVAILABLE = False
 
-# Add CUDA support for dlib
-if dlib.DLIB_USE_CUDA:
-    print("Using CUDA for dlib")
-else:
-    print("CUDA not available for dlib")
+try:
+    cv2.cuda.getCudaEnabledDeviceCount()
+    OPENCV_CUDA_AVAILABLE = cv2.cuda.getCudaEnabledDeviceCount() > 0
+except (cv2.error, AttributeError):
+    OPENCV_CUDA_AVAILABLE = False
+
+try:
+    DLIB_CUDA_AVAILABLE = dlib.DLIB_USE_CUDA
+except AttributeError:
+    DLIB_CUDA_AVAILABLE = False
+
+print(f"OpenCV CUDA support: {'Available' if OPENCV_CUDA_AVAILABLE else 'Not Available'}")
+print(f"dlib CUDA support: {'Available' if DLIB_CUDA_AVAILABLE else 'Not Available'}")
 
 def detect_teeth(image_path, gpu_id=0):
     """
@@ -24,12 +35,15 @@ def detect_teeth(image_path, gpu_id=0):
         teeth_image: Cropped image of teeth region
         teeth_rect: Rectangle coordinates [x, y, width, height]
     """
-    # Additional logging in detect_teeth
-    print(f"[GPU {gpu_id}] Attempting to detect teeth in {image_path}")
+    print(f"[Worker {gpu_id}] Attempting to detect teeth in {image_path}")
     
-    # Set CUDA device
-    if dlib.DLIB_USE_CUDA:
-        cv2.cuda.setDevice(gpu_id)
+    # Set CUDA device if available
+    if OPENCV_CUDA_AVAILABLE:
+        try:
+            cv2.cuda.setDevice(gpu_id)
+            print(f"[Worker {gpu_id}] Set OpenCV CUDA device to {gpu_id}")
+        except cv2.error as e:
+            print(f"[Worker {gpu_id}] Warning: Failed to set CUDA device: {e}")
     
     # Load image
     image = cv2.imread(image_path)
@@ -69,7 +83,7 @@ def detect_teeth(image_path, gpu_id=0):
         # Try with original grayscale if enhanced fails
         faces = detector(gray)
         if len(faces) == 0:
-            print(f"[GPU {gpu_id}] No faces detected in {image_path}")
+            print(f"[Worker {gpu_id}] No faces detected in {image_path}")
             raise ValueError("No faces detected in the image")
     
     teeth_image = None
@@ -236,7 +250,7 @@ def detect_teeth(image_path, gpu_id=0):
             if inner_w > 10 and inner_h > 5:
                 teeth_image = image[inner_y:inner_y+inner_h, inner_x:inner_x+inner_w]
                 teeth_rect = [inner_x, inner_y, inner_w, inner_h]
-                print(f"[GPU {gpu_id}] Using fallback region for {image_path}")
+                print(f"[Worker {gpu_id}] Using fallback region for {image_path}")
     
     # Return None, None if no teeth were detected
     if teeth_image is None:
@@ -244,12 +258,16 @@ def detect_teeth(image_path, gpu_id=0):
     
     return teeth_image, teeth_rect
 
-def process_directory(directory_path, gpu_id):
-    print(f"[GPU {gpu_id}] Starting to process directory: {directory_path}")
+def process_directory(directory_path, worker_id):
+    print(f"[Worker {worker_id}] Starting to process directory: {directory_path}")
     try:
-        # Set GPU if available
-        if dlib.DLIB_USE_CUDA:
-            cv2.cuda.setDevice(gpu_id)
+        # Only try to set GPU if OpenCV has CUDA support
+        if OPENCV_CUDA_AVAILABLE:
+            try:
+                cv2.cuda.setDevice(worker_id)
+                print(f"[Worker {worker_id}] Set OpenCV CUDA device to {worker_id}")
+            except cv2.error as e:
+                print(f"[Worker {worker_id}] Warning: Failed to set CUDA device: {e}")
         
         image_dir = os.path.join(directory_path, "image")
         output_dir = os.path.join(directory_path, "teeth_seg")
@@ -257,11 +275,11 @@ def process_directory(directory_path, gpu_id):
         
         # Check if image directory exists
         if not os.path.exists(image_dir):
-            print(f"[GPU {gpu_id}] Error: Image directory {image_dir} does not exist")
+            print(f"[Worker {worker_id}] Error: Image directory {image_dir} does not exist")
             return
             
         if not os.path.isdir(image_dir):
-            print(f"[GPU {gpu_id}] Error: {image_dir} is not a directory")
+            print(f"[Worker {worker_id}] Error: {image_dir} is not a directory")
             return
             
         # Get list of images
@@ -271,14 +289,14 @@ def process_directory(directory_path, gpu_id):
                 if f.lower().endswith(('.png', '.jpg', '.jpeg'))
             ]
         except Exception as e:
-            print(f"[GPU {gpu_id}] Error listing images in {image_dir}: {str(e)}")
+            print(f"[Worker {worker_id}] Error listing images in {image_dir}: {str(e)}")
             return
             
         # Now we can safely reference image_files
-        print(f"[GPU {gpu_id}] Processing directory: {directory_path} with {len(image_files)} images")
+        print(f"[Worker {worker_id}] Processing directory: {directory_path} with {len(image_files)} images")
         
         if len(image_files) == 0:
-            print(f"[GPU {gpu_id}] No images found in {image_dir}")
+            print(f"[Worker {worker_id}] No images found in {image_dir}")
             return
             
         print(f"Processing {len(image_files)} images...")
@@ -290,7 +308,7 @@ def process_directory(directory_path, gpu_id):
             output_path = os.path.join(output_dir, image_file)
             
             try:
-                teeth_img, teeth_coords = detect_teeth(input_path, gpu_id=gpu_id)
+                teeth_img, teeth_coords = detect_teeth(input_path, gpu_id=worker_id)
                 
                 if teeth_img is not None:
                     # Save teeth image
@@ -315,11 +333,11 @@ def process_directory(directory_path, gpu_id):
         coords_path = os.path.join(output_dir, "all.txt")
         np.savetxt(coords_path, np.array(teeth_rect_list), fmt='%d')
         
-        print(f"[GPU {gpu_id}] Writing detection results to {coords_path}")
+        print(f"[Worker {worker_id}] Writing detection results to {coords_path}")
         print(f"\nProcessing complete. Results saved in {output_dir}")
         print(f"Coordinates saved to {coords_path}")
     except Exception as e:
-        print(f"[GPU {gpu_id}] Unexpected error in process_directory: {str(e)}")
+        print(f"[Worker {worker_id}] Unexpected error in process_directory: {str(e)}")
         import traceback
         traceback.print_exc()
 
@@ -327,33 +345,39 @@ if __name__ == "__main__":
     import argparse, os
     from concurrent.futures import ProcessPoolExecutor
 
-    parser = argparse.ArgumentParser(description="Teeth detection in images using specified GPUs.")
+    parser = argparse.ArgumentParser(description="Teeth detection in images using multiple worker processes.")
     parser.add_argument("root_directory", help="Root directory containing subdirectories.")
-    parser.add_argument("--gpus", type=int, default=2, help="Number of GPUs available (default: 2)")
+    parser.add_argument("--workers", type=int, default=2, help="Number of worker processes (default: 2)")
     args = parser.parse_args()
 
     root_directory = args.root_directory
-    gpu_count = args.gpus
+    worker_count = args.workers
 
     # Gather subdirectories to process
     subdirectories = [d for d in os.listdir(root_directory) 
                       if os.path.isdir(os.path.join(root_directory, d))]
 
-    # Create GPU list based on the user-specified number
-    gpus = list(range(gpu_count))
+    # Create worker ID list
+    worker_ids = list(range(worker_count))
 
     # Main block logs
     print(f"Discovered {len(subdirectories)} subdirectories under Root: {root_directory}")
-    print(f"Using {gpu_count} GPUs: {gpus}")
+    print(f"Using {worker_count} worker processes")
        
-    
-    # Run processing in parallel using the available GPUs
-    with ProcessPoolExecutor(max_workers=gpu_count) as executor:
+    # Run processing in parallel
+    with ProcessPoolExecutor(max_workers=worker_count) as executor:
         futures = []
         for i, subdir in enumerate(subdirectories):
             dir_path = os.path.join(root_directory, subdir)
-            futures.append(executor.submit(process_directory, dir_path, gpus[i % len(gpus)]))
-            print(f"Submitting {subdir} to GPU {gpus[i % gpu_count]}")
+            worker_id = worker_ids[i % len(worker_ids)]
+            futures.append(executor.submit(process_directory, dir_path, worker_id))
+            print(f"Submitting {subdir} to worker {worker_id}")
         # Wait for all tasks to complete
         wait(futures)
+        
+        # Check for exceptions in futures
+        for future in futures:
+            if future.exception():
+                print(f"Error in worker: {future.exception()}")
+        
         print("All jobs have finished.")
