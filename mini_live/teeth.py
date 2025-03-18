@@ -238,25 +238,14 @@ def detect_teeth(image_path, gpu_id=0):
     
     return teeth_image, teeth_rect
 
-if __name__ == "__main__":
-    import sys
-    import os
-    from tqdm import tqdm
-
-    if len(sys.argv) < 2:
-        print("Usage: python teeth.py <directory_path>")
-        sys.exit(1)
-    
-    directory_path = sys.argv[1]
-    if not os.path.isdir(directory_path):
-        print(f"Error: {directory_path} is not a directory")
-        sys.exit(1)
-    
+def process_directory(directory_path, gpu_id):
+    # Set GPU if available
+    if dlib.DLIB_USE_CUDA:
+        cv2.cuda.setDevice(gpu_id)
     # Create output directory
     image_dir = os.path.join(directory_path, "image")
     output_dir = os.path.join(directory_path, "teeth_seg")
     os.makedirs(output_dir, exist_ok=True)
-    
     # Get list of images
     image_files = [f for f in os.listdir(image_dir) 
                   if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
@@ -265,12 +254,12 @@ if __name__ == "__main__":
     teeth_rect_list = []
     
     # Process each image with progress bar
-    for image_file in tqdm(image_files, desc="Detecting teeth"):
+    for image_file in tqdm(image_files, desc=f"Detecting teeth in {os.path.basename(directory_path)}"):
         input_path = os.path.join(image_dir, image_file)
         output_path = os.path.join(output_dir, image_file)
         
         try:
-            teeth_img, teeth_coords = detect_teeth(input_path)
+            teeth_img, teeth_coords = detect_teeth(input_path, gpu_id=gpu_id)
             
             if teeth_img is not None:
                 # Save teeth image
@@ -297,3 +286,28 @@ if __name__ == "__main__":
     
     print(f"\nProcessing complete. Results saved in {output_dir}")
     print(f"Coordinates saved to {coords_path}")
+
+if __name__ == "__main__":
+    import argparse, os
+    from concurrent.futures import ProcessPoolExecutor
+
+    parser = argparse.ArgumentParser(description="Teeth detection in images using specified GPUs.")
+    parser.add_argument("root_directory", help="Root directory containing subdirectories.")
+    parser.add_argument("--gpus", type=int, default=2, help="Number of GPUs available (default: 2)")
+    args = parser.parse_args()
+
+    root_directory = args.root_directory
+    gpu_count = args.gpus
+
+    # Gather subdirectories to process
+    subdirectories = [d for d in os.listdir(root_directory) 
+                      if os.path.isdir(os.path.join(root_directory, d))]
+
+    # Create GPU list based on the user-specified number
+    gpus = list(range(gpu_count))
+
+    # Run processing in parallel using the available GPUs
+    with ProcessPoolExecutor(max_workers=gpu_count) as executor:
+        for i, subdir in enumerate(subdirectories):
+            dir_path = os.path.join(root_directory, subdir)
+            executor.submit(process_directory, dir_path, gpus[i % len(gpus)])
