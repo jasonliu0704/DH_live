@@ -4,6 +4,7 @@ import dlib
 import os.path
 import bz2
 from concurrent.futures import ProcessPoolExecutor, wait
+from tqdm import tqdm
 
 
 # Add CUDA support for dlib
@@ -244,21 +245,20 @@ def detect_teeth(image_path, gpu_id=0):
     return teeth_image, teeth_rect
 
 def process_directory(directory_path, gpu_id):
-    # Set GPU if available
     if dlib.DLIB_USE_CUDA:
         cv2.cuda.setDevice(gpu_id)
-    
-    # Additional logging in process_directory
-    print(f"[GPU {gpu_id}] Processing directory: {directory_path} with {len(image_files)} images")
-    
-    # Create output directory
     image_dir = os.path.join(directory_path, "image")
     output_dir = os.path.join(directory_path, "teeth_seg")
     os.makedirs(output_dir, exist_ok=True)
-    # Get list of images
-    image_files = [f for f in os.listdir(image_dir) 
-                  if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+
+    image_files = [
+        f for f in os.listdir(image_dir)
+        if f.lower().endswith(('.png', '.jpg', '.jpeg'))
+    ]
     
+    # Now we can safely reference image_files
+    print(f"[GPU {gpu_id}] Processing directory: {directory_path} with {len(image_files)} images")
+
     print(f"Processing {len(image_files)} images...")
     teeth_rect_list = []
     
@@ -319,8 +319,7 @@ if __name__ == "__main__":
     # Main block logs
     print(f"Discovered {len(subdirectories)} subdirectories under Root: {root_directory}")
     print(f"Using {gpu_count} GPUs: {gpus}")
-    for i, subdir in enumerate(subdirectories):
-        print(f"Submitting {subdir} to GPU {gpus[i % gpu_count]}")
+       
     
     # Run processing in parallel using the available GPUs
     with ProcessPoolExecutor(max_workers=gpu_count) as executor:
@@ -328,6 +327,7 @@ if __name__ == "__main__":
         for i, subdir in enumerate(subdirectories):
             dir_path = os.path.join(root_directory, subdir)
             futures.append(executor.submit(process_directory, dir_path, gpus[i % len(gpus)]))
+            print(f"Submitting {subdir} to GPU {gpus[i % gpu_count]}")
         # Wait for all tasks to complete
         wait(futures)
         print("All jobs have finished.")
