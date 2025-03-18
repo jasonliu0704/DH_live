@@ -24,6 +24,22 @@ except AttributeError:
 print(f"OpenCV CUDA support: {'Available' if OPENCV_CUDA_AVAILABLE else 'Not Available'}")
 print(f"dlib CUDA support: {'Available' if DLIB_CUDA_AVAILABLE else 'Not Available'}")
 
+# Enable CUDA device selection for dlib if available
+if DLIB_CUDA_AVAILABLE:
+    def set_dlib_cuda_device(device_id):
+        """Set the CUDA device for dlib to use"""
+        try:
+            # dlib uses a global CUDA device setting
+            dlib.cuda.set_device(device_id)
+            return True
+        except Exception as e:
+            print(f"Failed to set dlib CUDA device: {e}")
+            return False
+else:
+    def set_dlib_cuda_device(device_id):
+        """Dummy function when CUDA is not available"""
+        return False
+
 def detect_teeth(image_path, gpu_id=0):
     """
     Detect teeth in an image with improved accuracy for full teeth coverage
@@ -37,13 +53,12 @@ def detect_teeth(image_path, gpu_id=0):
     """
     print(f"[Worker {gpu_id}] Attempting to detect teeth in {image_path}")
     
-    # Set CUDA device if available
-    if OPENCV_CUDA_AVAILABLE:
-        try:
-            cv2.cuda.setDevice(gpu_id)
-            print(f"[Worker {gpu_id}] Set OpenCV CUDA device to {gpu_id}")
-        except cv2.error as e:
-            print(f"[Worker {gpu_id}] Warning: Failed to set CUDA device: {e}")
+    # Set CUDA device only for dlib if available - skip OpenCV CUDA
+    if DLIB_CUDA_AVAILABLE:
+        if set_dlib_cuda_device(gpu_id):
+            print(f"[Worker {gpu_id}] Set dlib CUDA device to {gpu_id}")
+        else:
+            print(f"[Worker {gpu_id}] Failed to set dlib CUDA device")
     
     # Load image
     image = cv2.imread(image_path)
@@ -261,13 +276,12 @@ def detect_teeth(image_path, gpu_id=0):
 def process_directory(directory_path, worker_id):
     print(f"[Worker {worker_id}] Starting to process directory: {directory_path}")
     try:
-        # Only try to set GPU if OpenCV has CUDA support
-        if OPENCV_CUDA_AVAILABLE:
-            try:
-                cv2.cuda.setDevice(worker_id)
-                print(f"[Worker {worker_id}] Set OpenCV CUDA device to {worker_id}")
-            except cv2.error as e:
-                print(f"[Worker {worker_id}] Warning: Failed to set CUDA device: {e}")
+        # Set CUDA device for dlib if available
+        if DLIB_CUDA_AVAILABLE:
+            if set_dlib_cuda_device(worker_id):
+                print(f"[Worker {worker_id}] Set dlib CUDA device to {worker_id}")
+            else:
+                print(f"[Worker {worker_id}] Failed to set dlib CUDA device")
         
         image_dir = os.path.join(directory_path, "image")
         output_dir = os.path.join(directory_path, "teeth_seg")
