@@ -11,14 +11,13 @@ OPENCV_CUDA_AVAILABLE = False
 DLIB_CUDA_AVAILABLE = False
 
 try:
-    cv2.cuda.getCudaEnabledDeviceCount()
     OPENCV_CUDA_AVAILABLE = cv2.cuda.getCudaEnabledDeviceCount() > 0
 except (cv2.error, AttributeError):
     OPENCV_CUDA_AVAILABLE = False
 
 try:
-    DLIB_CUDA_AVAILABLE = dlib.DLIB_USE_CUDA
-except AttributeError:
+    DLIB_CUDA_AVAILABLE = dlib.cuda.get_num_devices() > 0
+except (AttributeError, Exception):
     DLIB_CUDA_AVAILABLE = False
 
 print(f"OpenCV CUDA support: {'Available' if OPENCV_CUDA_AVAILABLE else 'Not Available'}")
@@ -40,12 +39,114 @@ else:
         """Dummy function when CUDA is not available"""
         return False
 
+# Add OpenCV CUDA device selection
+def set_opencv_cuda_device(device_id):
+    """Set the CUDA device for OpenCV to use"""
+    if OPENCV_CUDA_AVAILABLE:
+        try:
+            cv2.cuda.setDevice(device_id)
+            return True
+        except Exception as e:
+            print(f"Failed to set OpenCV CUDA device: {e}")
+            return False
+    return False
+
+def cuda_enhanced_clahe(gray_img, clip_limit=2.0, grid_size=(8, 8)):
+    """Apply CLAHE using CUDA if available, otherwise use CPU implementation"""
+    if OPENCV_CUDA_AVAILABLE:
+        try:
+            # Upload to GPU
+            gpu_img = cv2.cuda_GpuMat()
+            gpu_img.upload(gray_img)
+            
+            # Create CUDA CLAHE
+            cuda_clahe = cv2.cuda.createCLAHE(clipLimit=clip_limit, tileGridSize=grid_size)
+            
+            # Apply CLAHE on GPU
+            result_gpu = cuda_clahe.apply(gpu_img)
+            
+            # Download result
+            return result_gpu.download()
+        except Exception as e:
+            print(f"CUDA CLAHE failed, falling back to CPU: {e}")
+    
+    # CPU fallback
+    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=grid_size)
+    return clahe.apply(gray_img)
+
+def cuda_threshold(img, thresh, maxval, type):
+    """Apply threshold using CUDA if available, otherwise use CPU implementation"""
+    if OPENCV_CUDA_AVAILABLE:
+        try:
+            # Upload to GPU
+            gpu_img = cv2.cuda_GpuMat()
+            gpu_img.upload(img)
+            
+            # Apply threshold on GPU
+            _, gpu_result = cv2.cuda.threshold(gpu_img, thresh, maxval, type)
+            
+            # Download result
+            return gpu_result.download()
+        except Exception as e:
+            print(f"CUDA threshold failed, falling back to CPU: {e}")
+    
+    # CPU fallback
+    _, result = cv2.threshold(img, thresh, maxval, type)
+    return result
+
+def cuda_adaptive_threshold(img, maxval, adaptive_method, threshold_type, block_size, C):
+    """Apply adaptive threshold using CUDA if available, otherwise use CPU implementation"""
+    if OPENCV_CUDA_AVAILABLE:
+        try:
+            # Upload to GPU
+            gpu_img = cv2.cuda_GpuMat()
+            gpu_img.upload(img)
+            
+            # Apply adaptive threshold on GPU
+            gpu_result = cv2.cuda.adaptiveThreshold(gpu_img, maxval, adaptive_method, threshold_type, block_size, C)
+            
+            # Download result
+            return gpu_result.download()
+        except Exception as e:
+            print(f"CUDA adaptive threshold failed, falling back to CPU: {e}")
+    
+    # CPU fallback
+    return cv2.adaptiveThreshold(img, maxval, adaptive_method, threshold_type, block_size, C)
+
+def cuda_morphology(img, op, kernel):
+    """Apply morphological operations using CUDA if available, otherwise use CPU implementation"""
+    if OPENCV_CUDA_AVAILABLE:
+        try:
+            # Upload to GPU
+            gpu_img = cv2.cuda_GpuMat()
+            gpu_img.upload(img)
+            
+            # Create CUDA filter
+            if op == cv2.MORPH_OPEN:
+                gpu_filter = cv2.cuda.createMorphologyFilter(op, cv2.CV_8UC1, kernel)
+            elif op == cv2.MORPH_CLOSE:
+                gpu_filter = cv2.cuda.createMorphologyFilter(op, cv2.CV_8UC1, kernel)
+            else:
+                raise ValueError(f"Unsupported morphological operation: {op}")
+            
+            # Apply filter
+            gpu_result = gpu_filter.apply(gpu_img)
+            
+            # Download result
+            return gpu_result.download()
+        except Exception as e:
+            print(f"CUDA morphology failed, falling back to CPU: {e}")
+    
+    # CPU fallback
+    return cv2.morphologyEx(img, op, kernel)
+
 def detect_teeth(image_path, gpu_id=0):
     """
     Detect teeth in an image with improved accuracy for full teeth coverage
     
     Args:
         image_path: Path to the image file
+        gpu_id: GPU device ID to use
         
     Returns:
         teeth_image: Cropped image of teeth region
@@ -53,12 +154,18 @@ def detect_teeth(image_path, gpu_id=0):
     """
     print(f"[Worker {gpu_id}] Attempting to detect teeth in {image_path}")
     
-    # Set CUDA device only for dlib if available - skip OpenCV CUDA
+    # Set CUDA devices if available
     if DLIB_CUDA_AVAILABLE:
         if set_dlib_cuda_device(gpu_id):
             print(f"[Worker {gpu_id}] Set dlib CUDA device to {gpu_id}")
         else:
             print(f"[Worker {gpu_id}] Failed to set dlib CUDA device")
+    
+    if OPENCV_CUDA_AVAILABLE:
+        if set_opencv_cuda_device(gpu_id):
+            print(f"[Worker {gpu_id}] Set OpenCV CUDA device to {gpu_id}")
+        else:
+            print(f"[Worker {gpu_id}] Failed to set OpenCV CUDA device")
     
     # Load image
     image = cv2.imread(image_path)
@@ -87,9 +194,8 @@ def detect_teeth(image_path, gpu_id=0):
     # Convert to grayscale
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     
-    # Enhance contrast using CLAHE
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-    enhanced_gray = clahe.apply(gray)
+    # Enhance contrast using CLAHE with CUDA if available
+    enhanced_gray = cuda_enhanced_clahe(gray, clipLimit=2.0, grid_size=(8, 8))
     
     # Detect faces in enhanced image
     faces = detector(enhanced_gray)
@@ -137,11 +243,11 @@ def detect_teeth(image_path, gpu_id=0):
         # Extract mouth region with padding
         mouth_roi = enhanced_gray[my_padded:my_padded+mh_padded, mx_padded:mx_padded+mw_padded]
         
-        # Try multiple thresholding techniques
+        # Try multiple thresholding techniques using CUDA if available
         teeth_regions = []
         
         # 1. Lower thresholds for adaptive detection to catch more subtle teeth
-        adaptive_thresh = cv2.adaptiveThreshold(
+        adaptive_thresh = cuda_adaptive_threshold(
             mouth_roi, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
             cv2.THRESH_BINARY, 11, 2  # Increased block size, lower constant for subtler detection
         )
@@ -149,15 +255,15 @@ def detect_teeth(image_path, gpu_id=0):
         
         # 2. Wider range of threshold values including lower values
         for threshold_val in [130, 150, 170]:  # Lower threshold values to detect more subtle teeth
-            _, fixed_thresh = cv2.threshold(mouth_roi, threshold_val, 255, cv2.THRESH_BINARY)
+            fixed_thresh = cuda_threshold(mouth_roi, threshold_val, 255, cv2.THRESH_BINARY)
             teeth_regions.append(fixed_thresh)
         
         # 3. Otsu's thresholding
-        _, otsu_thresh = cv2.threshold(mouth_roi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        otsu_thresh = cuda_threshold(mouth_roi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         teeth_regions.append(otsu_thresh)
         
         # 4. Add TRIANGLE thresholding which can work well for bimodal images
-        _, triangle_thresh = cv2.threshold(mouth_roi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_TRIANGLE)
+        triangle_thresh = cuda_threshold(mouth_roi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_TRIANGLE)
         teeth_regions.append(triangle_thresh)
         
         # Combine results
@@ -167,10 +273,10 @@ def detect_teeth(image_path, gpu_id=0):
         
         # Clean up using morphological operations
         kernel = np.ones((3, 3), np.uint8)  # Slightly larger kernel
-        opening = cv2.morphologyEx(combined_thresh, cv2.MORPH_OPEN, kernel)
+        opening = cuda_morphology(combined_thresh, cv2.MORPH_OPEN, kernel)
         
         # More aggressive closing to connect teeth regions
-        closing = cv2.morphologyEx(opening, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+        closing = cuda_morphology(opening, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
         
         # Find contours
         contours, _ = cv2.findContours(closing, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -276,12 +382,18 @@ def detect_teeth(image_path, gpu_id=0):
 def process_directory(directory_path, worker_id):
     print(f"[Worker {worker_id}] Starting to process directory: {directory_path}")
     try:
-        # Set CUDA device for dlib if available
+        # Set CUDA devices if available
         if DLIB_CUDA_AVAILABLE:
             if set_dlib_cuda_device(worker_id):
                 print(f"[Worker {worker_id}] Set dlib CUDA device to {worker_id}")
             else:
                 print(f"[Worker {worker_id}] Failed to set dlib CUDA device")
+                
+        if OPENCV_CUDA_AVAILABLE:
+            if set_opencv_cuda_device(worker_id):
+                print(f"[Worker {worker_id}] Set OpenCV CUDA device to {worker_id}")
+            else:
+                print(f"[Worker {worker_id}] Failed to set OpenCV CUDA device")
         
         image_dir = os.path.join(directory_path, "image")
         output_dir = os.path.join(directory_path, "teeth_seg")
