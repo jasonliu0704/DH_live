@@ -22,7 +22,10 @@ def detect_teeth(image_path, gpu_id=0):
         teeth_image: Cropped image of teeth region
         teeth_rect: Rectangle coordinates [x, y, width, height]
     """
-     # Set CUDA device
+    # Additional logging in detect_teeth
+    print(f"[GPU {gpu_id}] Attempting to detect teeth in {image_path}")
+    
+    # Set CUDA device
     if dlib.DLIB_USE_CUDA:
         cv2.cuda.setDevice(gpu_id)
     
@@ -64,6 +67,7 @@ def detect_teeth(image_path, gpu_id=0):
         # Try with original grayscale if enhanced fails
         faces = detector(gray)
         if len(faces) == 0:
+            print(f"[GPU {gpu_id}] No faces detected in {image_path}")
             raise ValueError("No faces detected in the image")
     
     teeth_image = None
@@ -230,7 +234,7 @@ def detect_teeth(image_path, gpu_id=0):
             if inner_w > 10 and inner_h > 5:
                 teeth_image = image[inner_y:inner_y+inner_h, inner_x:inner_x+inner_w]
                 teeth_rect = [inner_x, inner_y, inner_w, inner_h]
-                print("Using fallback face-based region for teeth detection")
+                print(f"[GPU {gpu_id}] Using fallback region for {image_path}")
     
     # Return None, None if no teeth were detected
     if teeth_image is None:
@@ -242,6 +246,10 @@ def process_directory(directory_path, gpu_id):
     # Set GPU if available
     if dlib.DLIB_USE_CUDA:
         cv2.cuda.setDevice(gpu_id)
+    
+    # Additional logging in process_directory
+    print(f"[GPU {gpu_id}] Processing directory: {directory_path} with {len(image_files)} images")
+    
     # Create output directory
     image_dir = os.path.join(directory_path, "image")
     output_dir = os.path.join(directory_path, "teeth_seg")
@@ -284,6 +292,7 @@ def process_directory(directory_path, gpu_id):
     coords_path = os.path.join(output_dir, "all.txt")
     np.savetxt(coords_path, np.array(teeth_rect_list), fmt='%d')
     
+    print(f"[GPU {gpu_id}] Writing detection results to {coords_path}")
     print(f"\nProcessing complete. Results saved in {output_dir}")
     print(f"Coordinates saved to {coords_path}")
 
@@ -306,6 +315,12 @@ if __name__ == "__main__":
     # Create GPU list based on the user-specified number
     gpus = list(range(gpu_count))
 
+    # Main block logs
+    print(f"Discovered {len(subdirectories)} subdirectories under Root: {root_directory}")
+    print(f"Using {gpu_count} GPUs: {gpus}")
+    for i, subdir in enumerate(subdirectories):
+        print(f"Submitting {subdir} to GPU {gpus[i % gpu_count]}")
+    
     # Run processing in parallel using the available GPUs
     with ProcessPoolExecutor(max_workers=gpu_count) as executor:
         for i, subdir in enumerate(subdirectories):
