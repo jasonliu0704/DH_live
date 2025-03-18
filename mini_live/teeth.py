@@ -3,6 +3,7 @@ import numpy as np
 import dlib
 import os.path
 import bz2
+from concurrent.futures import ProcessPoolExecutor, wait
 
 
 # Add CUDA support for dlib
@@ -323,6 +324,10 @@ if __name__ == "__main__":
     
     # Run processing in parallel using the available GPUs
     with ProcessPoolExecutor(max_workers=gpu_count) as executor:
+        futures = []
         for i, subdir in enumerate(subdirectories):
             dir_path = os.path.join(root_directory, subdir)
-            executor.submit(process_directory, dir_path, gpus[i % len(gpus)])
+            futures.append(executor.submit(process_directory, dir_path, gpus[i % len(gpus)]))
+        # Wait for all tasks to complete
+        wait(futures)
+        print("All jobs have finished.")
